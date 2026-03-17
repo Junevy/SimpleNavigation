@@ -3,36 +3,44 @@ using System.Windows.Controls;
 
 namespace SimpleNavigation
 {
-    public class NavigationService() : INavigationService
+    public class NavigationService : INavigationService
     {
-        //private IServiceProvider serviceProvider = serviceProvider;
+        // 维护的路由表
         private readonly ConcurrentDictionary<string, NavigationRoute> Routes = new();
+
+        //维护的导航区域表
         private readonly ConcurrentDictionary<string, Frame> Regions = new();
 
-        /// <summary>
-        /// 注册路由
-        /// </summary>
-        /// <typeparam name="TPage">需要导航过的Page</typeparam>
-        /// <param name="route">对应Page的Key</param>
+        public NavigationService()
+        {
+            // 订阅注册Region事件，允许在XAML中使用RegionService注册导航区域
+            RegionService.RegionRegisted += (regionName, frame) => RegisterRegion(regionName, frame);
+        }
+
+
         public void RegisterRoute<TPage>(NavigationOptions? options = null) where TPage : Page, new()
         {
             RegisterRoute(nameof(TPage), () => new TPage(), options);
         }
+
 
         public void RegisterRoute<TPage>(string route, NavigationOptions? options = null) where TPage : Page, new()
         {
             RegisterRoute<TPage>(route, () => new TPage(), options);
         }
 
-        public void RegisterRoute<TPage>(string route, Func<Page> factory, NavigationOptions? options = null)
+
+        public void RegisterRoute<TPage>(string route, Func<Page> factory, NavigationOptions? options = null) where TPage : Page
         {
             RegisterRoute(route, factory, options, typeof(TPage));
         }
 
+
         public void RegisterRoute<TPage>(Func<Page> factory, NavigationOptions? options = null)
         {
-            RegisterRoute(nameof(TPage), factory, options, typeof(TPage));
+            RegisterRoute(typeof(TPage).ToString(), factory, options, typeof(TPage));
         }
+
 
         public void RegisterRoute(string route, Func<Page> factory, NavigationOptions? options = null, Type? pageType = null)
         {
@@ -47,39 +55,24 @@ namespace SimpleNavigation
         }
 
 
-
-        /// <summary>
-        /// 注册导航区域
-        /// </summary>
-        /// <typeparam name="TType">限制Region的类型为Frame</typeparam>
-        /// <param name="region">Region的Key</param>
-        /// <param name="targetRegion">Region对象</param>
         public void RegisterRegion(string regionName, Frame region)
         {
             if (!string.IsNullOrWhiteSpace(regionName) && region != null)
                 Regions[regionName] = region;
         }
 
-        /// <summary>
-        /// 导航功能的实现
-        /// </summary>
-        /// <typeparam name="TPage">导航目标类型</typeparam>
-        /// <param name="region">导航区域的Key</param>
-        public void Navigate<TPage>(string region)
+
+        public void Navigate<TPage>(string region, NavigationParameter? parameter = null)
         {
-            Navigate(region, nameof(TPage), new NavigationParameter());
+            Navigate(region, typeof(TPage).ToString(), parameter);
         }
 
-        /// <summary>
-        /// 导航功能的实现
-        /// </summary>
-        /// <param name="route">对应Page的Key</param>
-        /// <param name="region">导航区域的Key</param>
-        public void Navigate(string region, string route, NavigationParameter parameters)
+        public void Navigate(string region, string route, NavigationParameter? parameters = null)
         {
             if (!Routes.TryGetValue(route, out var targetPage)) return;
             if (!Regions.TryGetValue(region, out var targetRegion)) return;
 
+            // 通过配置约束：不允许多次导航到同一类型的Page，避免重复创建页面实例和触发导航事件
             if (targetPage.Options.AllowMulti == NavigationOptions.PageMode.Singleton)
             {
                 if (targetRegion.Content?.GetType() == targetPage.PageType)
@@ -87,6 +80,8 @@ namespace SimpleNavigation
             }
 
             var pageInstance = targetPage.GetPage();
+
+            // 触发相应的导航事件
             InvokeNavigating(targetRegion.Content, parameters);
             targetRegion.Navigate(pageInstance);
             InvokeNavigated(pageInstance, parameters);
@@ -99,6 +94,11 @@ namespace SimpleNavigation
             }
         }
 
+        /// <summary>
+        /// 导航事件触发器，在导航前触发，允许页面或其ViewModel执行特定逻辑，如取消导航、准备数据等。触发时机：在调用<see cref="Frame.Navigate(object)"/>方法之前。
+        /// </summary>
+        /// <param name="oldPage">导航区域当前的Page</param>
+        /// <param name="parameters">导航时所携带的参数，详情见：<see cref="NavigationParameter"/></param>
         private void InvokeNavigating(object? oldPage, NavigationParameter parameters)
         {
             if (oldPage is INavigationAware aware)
@@ -108,6 +108,11 @@ namespace SimpleNavigation
                 vmAware.OnNavigating(parameters);
         }
 
+        /// <summary>
+        /// 导航事件触发器，在导航后触发，允许页面或其ViewModel执行特定逻辑，如取消导航、准备数据等。触发时机：在调用<see cref="Frame.Navigate(object)"/>方法之后。
+        /// </summary>
+        /// <param name="pageInstance"></param>
+        /// <param name="parameters"></param>
         private void InvokeNavigated(Page pageInstance, NavigationParameter parameters)
         {
             if (pageInstance is INavigationAware aware)
@@ -116,6 +121,7 @@ namespace SimpleNavigation
             if (pageInstance.DataContext is INavigationAware vmAware)
                 vmAware.OnNavigated(parameters);
         }
+
 
         public void Goback(string region)
         {
@@ -126,15 +132,18 @@ namespace SimpleNavigation
             }
         }
 
+
         public bool UnRegisterRoute<TPage>() where TPage : Page
         {
-            return Routes.TryRemove(nameof(TPage), out _);
+            return Routes.TryRemove(typeof(TPage).ToString(), out _);
         }
+
 
         public bool UnRegisterRoute(string route)
         {
             return Routes.TryRemove(route, out _);
         }
+
 
         public bool UnRegisterRegion(string region)
         {

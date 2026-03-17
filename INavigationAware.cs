@@ -9,12 +9,12 @@
         /// 导航即将发生时的回调方法
         /// </summary>
         /// <param name="parameters">导航携带的参数</param>
-        void OnNavigating(NavigationParameter parameters);
+        void OnNavigating(NavigationParameter? parameters);
 
         /// <summary>
         /// 导航完成后的回调方法
         /// </summary>
         /// <param name="parameters"></param>
-        void OnNavigated(NavigationParameter parameters);
+        void OnNavigated(NavigationParameter? parameters);
     }
 }
