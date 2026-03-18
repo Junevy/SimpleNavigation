@@ -1,4 +1,6 @@
-﻿namespace SimpleNavigation
+﻿using SimpleNavigation.Common;
+
+namespace SimpleNavigation.Interface
 {
     /// <summary>
     /// 导航的生命周期，需要ViewModel或Page实现该接口以接收导航事件的回调

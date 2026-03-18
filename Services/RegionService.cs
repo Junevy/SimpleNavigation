@@ -1,7 +1,7 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
 
-namespace SimpleNavigation
+namespace SimpleNavigation.Services
 {
     /// <summary>
     /// 维护区域功能

@@ -1,7 +1,9 @@
-﻿using System.Collections.Concurrent;
+﻿using SimpleNavigation.Common;
+using SimpleNavigation.Interface;
+using System.Collections.Concurrent;
 using System.Windows.Controls;
 
-namespace SimpleNavigation
+namespace SimpleNavigation.Services
 {
     public class NavigationService : INavigationService
     {

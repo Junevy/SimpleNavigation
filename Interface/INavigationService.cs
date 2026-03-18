@@ -1,6 +1,7 @@
-﻿using System.Windows.Controls;
+﻿using SimpleNavigation.Common;
+using System.Windows.Controls;
 
-namespace SimpleNavigation
+namespace SimpleNavigation.Interface
 {
     public interface INavigationService
     {

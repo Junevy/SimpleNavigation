@@ -1,4 +1,4 @@
-﻿namespace SimpleNavigation
+﻿namespace SimpleNavigation.Common
 {
     /// <summary>
     /// 导航参数对象
@@ -6,7 +6,6 @@
     public class NavigationParameter
     {
         public Dictionary<string, object> Parameters { get; } = [];
-
 
         public NavigationParameter(string key, object value)
         {
@@ -17,7 +16,7 @@
         public NavigationParameter(Dictionary<string, object> keyValues)
         {
             if (keyValues != null)
-                this.Parameters = keyValues;
+                Parameters = keyValues;
         }
 
         public NavigationParameter(params object[] values)
