@@ -151,5 +151,12 @@ namespace SimpleNavigation.Services
         {
             return Regions.TryRemove(region, out _);
         }
+
+        public Frame GetRegion(string regionName)
+        {
+            Regions.TryGetValue(regionName, out var frame);
+            if (frame == null) return null;
+            return frame;
+        }
     }
 }

@@ -95,5 +95,7 @@ namespace SimpleNavigation.Interface
         /// <typeparam name="TPage">取消注册路由的目标类型</typeparam>
         /// <returns>是否成功取消注册</returns>
         bool UnRegisterRoute<TPage>() where TPage : Page;
+
+        Frame GetRegion(string regionName);
     }
 }
