@@ -1,5 +1,8 @@
 namespace SimpleNavigation.Common
 {
+    /// <summary>
+    /// Discarded class.
+    /// </summary>
     public sealed class Serilogger : IDisposable
     {
         private bool disposed = false;

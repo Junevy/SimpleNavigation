@@ -7,16 +7,20 @@ namespace SimpleNavigation.Services
 {
     public class NavigationService : INavigationService
     {
+        private readonly ISerilog logger;
+
         // 维护的路由表
         private readonly ConcurrentDictionary<string, NavigationRoute> Routes = new();
 
         //维护的导航区域表
         private readonly ConcurrentDictionary<string, Frame> Regions = new();
 
-        public NavigationService()
+        public NavigationService(ISerilog logger)
         {
             // 订阅注册Region事件，允许在XAML中使用RegionService注册导航区域
             RegionService.RegionRegisted += (regionName, frame) => RegisterRegion(regionName, frame);
+
+            this.logger = logger; 
         }
 
 
