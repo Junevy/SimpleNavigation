@@ -1,7 +1,10 @@
+using System.Windows;
+using SimpleNavigation.Interface;
+
 namespace SimpleNavigation.Common
 {
     /// <summary>
-    /// Discarded class.
+    /// Serilog日志记录器，用于全局日志记录。
     /// </summary>
     public sealed class Serilogger : IDisposable
     {
@@ -9,7 +12,7 @@ namespace SimpleNavigation.Common
         private static readonly object loggerLock = new();
         private static int _instanceSet = 0;
 
-        private static volatile ISerilog _instance;
+        private static volatile ISerilog? _instance;
         public static ISerilog Instance 
         {
             get
@@ -18,43 +21,39 @@ namespace SimpleNavigation.Common
                     throw new ArgumentNullException($"{nameof(_instance)} is null.");
                 return _instance;
             } 
+            private set => _instance = value;
         }
 
         private Serilogger() { }
 
         public static void SetInstance(ISerilog logger)
         {
-            if (logger == null) throw new ArgumentNullException($"{nameof(logger)} is null.");
-
-            if (Interlocked.CompareExchange(ref _instanceSet, 1, 0) != 0)
-            {
-                throw InvalidaOperationException($"{nameof(Instance)} has been initialized!");
-            }
+            ArgumentNullException.ThrowIfNull(logger);
 
             lock(loggerLock)
             {
                 if (Instance != null)
                 {
                     Interlocked.Exchange(ref _instanceSet, 0);
-                    throw InvalidaOperationException($"{nameof(Instance)} has been initialized!");
+                    throw new InvalidOperationException($"{nameof(Instance)} has been initialized!");
                 }
 
-                this.Instance = logger;
+                Instance = logger;
             }
         }
 
-        private void Dispose()
+        public void Dispose()
         {
             if (disposed)
-                return;
-            
-            // Dispose(true);
-            GC.SuppressFinalize(this);
-            Instance.Dispose();
+                 return;
 
-            disposed = true;
-            _instance = null;
-            Interlocked.Exchange(ref _instanceSet, 0);
+ 
+             GC.SuppressFinalize(this);
+             Instance.Dispose();
+
+             disposed = true;
+             _instance = null;
+             Interlocked.Exchange(ref _instanceSet, 0);
         }
     }
 }

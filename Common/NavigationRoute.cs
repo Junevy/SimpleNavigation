@@ -6,7 +6,7 @@ namespace SimpleNavigation.Common
     /// 路由实例对象
     /// </summary>
     /// <param name="pageType">当前路由实例对应的Page类型，在判断是否允许重复导航时使用</param>
-    /// <param name="factory">路由实例的配置，详情见：<see cref="NavigationOptions"/></param>
+    /// <param name="factory">路由实例的配置，详情见：<see cref="DialogOptions"/></param>
     /// <param name="options">路由实例的构造方式，推荐使用<see cref="DependencyInjection"/>，以支持更复杂的页面构造需求。</param>
     internal class NavigationRoute
     {
@@ -15,7 +15,7 @@ namespace SimpleNavigation.Common
         /// </summary>
         public Guid Id { get; }
 
-        public NavigationRoute(Type pageType, Func<Page> factory, NavigationOptions options)
+        public NavigationRoute(Type pageType, Func<Page> factory, DialogOptions options)
         {
             Id = new Guid();
             this.factory = factory;
@@ -29,9 +29,9 @@ namespace SimpleNavigation.Common
         private readonly Func<Page> factory;
 
         /// <summary>
-        /// 路由实例的配置，详情见：<see cref="NavigationOptions"/>
+        /// 路由实例的配置，详情见：<see cref="DialogOptions"/>
         /// </summary>
-        public NavigationOptions Options { get; }
+        public DialogOptions Options { get; }
 
         /// <summary>
         /// 当前路由实例对应的Page类型，在判断是否允许重复导航时使用
@@ -50,7 +50,7 @@ namespace SimpleNavigation.Common
         /// <returns>路由实例</returns>
         public Page GetPage()
         {
-            if (Options.AllowMulti == NavigationOptions.PageMode.Singleton)
+            if (Options.AllowMulti == DialogOptions.DialogMode.Singleton)
                 return cachePage ??= factory();
 
             return factory();
