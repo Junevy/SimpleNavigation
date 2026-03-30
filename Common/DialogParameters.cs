@@ -3,23 +3,23 @@
     /// <summary>
     /// 导航参数对象
     /// </summary>
-    public class NavigationParameter
+        public class DialogParameters
     {
         public Dictionary<string, object> Parameters { get; } = [];
 
-        public NavigationParameter(string key, object value)
+        public DialogParameters(string key, object value)
         {
             if (key != null && value != null)
                 Parameters[key] = value;
         }
 
-        public NavigationParameter(Dictionary<string, object> keyValues)
+        public DialogParameters(Dictionary<string, object> keyValues)
         {
             if (keyValues != null)
                 Parameters = keyValues;
         }
 
-        public NavigationParameter(params object[] values)
+        public DialogParameters(params object[] values) 
         {
             for (int i = 0; i < values.Length -1; i++)
             {
