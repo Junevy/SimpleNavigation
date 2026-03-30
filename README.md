@@ -4,7 +4,7 @@ An ultra-lightweight navigation framework that makes implementing navigation a b
 ## Use
 1) Using the SimpleNavigation.dll
 2) Register and Build the DI container:
-··· C#
+```C#
         public void InitialProvider()
         {
             var container = new ServiceCollection();
@@ -49,7 +49,7 @@ An ultra-lightweight navigation framework that makes implementing navigation a b
     </Grid>
 ```
 4) Navigate to other Page or show Dialog:
-```
+```C#
         [RelayCommand]
         public void OpenWindow()
         {
