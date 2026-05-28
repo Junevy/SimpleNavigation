@@ -14,7 +14,6 @@ namespace SimpleNavigation.Common
             this.provider = provider;
         }
 
-
         private void OnWindowClosed(object? sender, EventArgs e)
         {
             if (sender == null) return;
