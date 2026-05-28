@@ -1,4 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
 using SimpleNavigation.Common;
 using SimpleNavigation.Interface;
 using System.Windows;
@@ -10,28 +9,43 @@ namespace SimpleNavigation.Services
     /// </summary>
     public class DialogService : IDialogService
     {
-        private readonly IServiceProvider provider;
-        public DialogService(IServiceProvider provider)
+        private readonly IDialogManager dialogManager;
+
+        public DialogService(IDialogManager dialogManager)
         {
-            this.provider = provider;
+            this.dialogManager = dialogManager;
         }
 
         public void Show<T>(DialogParameters? parameters = null) where T : Window
         {
-            var window = provider.GetRequiredService<T>();
+            var window = dialogManager.GetDialogWindow<T>();
+
+            if (window == null)
+                return;
 
             if (window.DataContext is IDialogAware vm)
+            {
                 vm.OnNavigated(parameters);
+                vm.RequestClose = (p) => window.Close();
+            }
 
             if (window is IDialogAware w)
+            {
                 w.OnNavigated(parameters);
+                w.RequestClose = (p) => window.Close();
+            }
 
-                window.Show();
+            window.Show();
+            window.Activate();
+
         }
 
         public DialogParameters? ShowDialog<T>(DialogParameters? parameters = null) where T : Window
         {
-            var window = provider.GetRequiredService<T>();
+            var window = dialogManager.GetDialogWindow<T>();
+            if (window == null)
+                return null;
+
             DialogParameters? result = null;
 
             if (window.DataContext is IDialogAware vm)
@@ -47,7 +61,6 @@ namespace SimpleNavigation.Services
             if (window is IDialogAware w)
             {
                 w.OnNavigated(parameters);
-
                 w.RequestClose = (p) =>
                 {
                     result = p;
@@ -55,8 +68,19 @@ namespace SimpleNavigation.Services
                 };
             }
 
-            window.ShowDialog();
+            try
+            {
+                window.ShowDialog();
+                window.Activate();
+            }
+            finally
+            {
+                if (window.DataContext is IDialogAware cleanupVm)
+                    cleanupVm.RequestClose = null;
+                else if (window is IDialogAware cleanupW)
+                    cleanupW.RequestClose = null;
 
+            }
             return result;
         }
     }

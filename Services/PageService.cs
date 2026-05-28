@@ -49,9 +49,26 @@ namespace SimpleNavigation.Services
 
                 region.Navigate(page);
 
-                if (page.DataContext is IPageAware pA)
+                if (page.DataContext is IPageAware pA && parameters != null)
                 {
                     pA.OnNavigated(parameters);
+                }
+            }
+        }
+
+        public void Navigate(string regionName, Type targetType, DialogParameters? parameters = null)
+        {
+            if (targetType.IsSubclassOf(typeof(Page)))
+            {
+                var region = GetRegion(regionName);
+                if (region != null)
+                {
+                    var page = provider.GetRequiredService(targetType) as Page;
+                    region.Navigate(page);
+                    if (page?.DataContext is IPageAware pA && parameters != null)
+                    {
+                        pA.OnNavigated(parameters);
+                    }
                 }
             }
         }
