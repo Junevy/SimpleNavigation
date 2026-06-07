@@ -21,9 +21,9 @@
 
         public DialogParameters(params object[] values) 
         {
-            for (int i = 0; i < values.Length -1; i++)
+            for (int i = 0; i < values.Length; i++)
             {
-                Parameters[i.ToString()] = values[i];
+                Parameters[$"{i}"] = values[i];
             }
         }
 
