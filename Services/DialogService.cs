@@ -48,6 +48,20 @@ namespace SimpleNavigation.Services
 
             DialogParameters? result = null;
 
+            window.Closing += (s, e) =>
+            {
+                e.Cancel = true;
+                if (s is IDialogAware dialogAware)
+                {
+                    dialogAware.RequestClose?.Invoke(result);
+                }
+
+                if (s is Window w && w.DataContext is IDialogAware dialogVmAware)
+                {
+                    dialogVmAware.RequestClose?.Invoke(result);
+                }
+            };
+
             if (window.DataContext is IDialogAware vm)
             {
                 vm.OnNavigated(parameters);
