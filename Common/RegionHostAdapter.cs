@@ -25,6 +25,11 @@ internal interface IPageRegionHostAdapter : IRegionHostAdapter
     void GoBack(Frame frame);
 }
 
+internal interface IContentRegionHostAdapter : IRegionHostAdapter
+{
+    void Present(ContentControl host, FrameworkElement content);
+}
+
 internal static class RegionHostAdapterResolver
 {
     private static readonly IRegionHostAdapter[] HostAdapters =

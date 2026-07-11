@@ -15,6 +15,7 @@ namespace SimpleNavigation.Extensions
         {
             serviceCollection.TryAddSingleton<IDialogService, DialogService>();
             serviceCollection.TryAddSingleton<IPageService, PageService>();
+            serviceCollection.TryAddSingleton<IContentService, ContentService>();
             serviceCollection.TryAddSingleton<IDialogManager, DialogManager>();
             serviceCollection.TryAddSingleton<IRegionManager, RegionManager>();
             serviceCollection.TryAddSingleton<NavigationRouteRegistry>(provider =>

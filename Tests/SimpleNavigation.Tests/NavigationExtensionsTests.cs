@@ -75,6 +75,7 @@ public sealed class NavigationExtensionsTests
         services.AddSingleton<IRegionManager>(regionManager);
         services.AddSingleton<IDialogService, DialogService>();
         services.AddSingleton<IPageService, PageService>();
+        services.AddSingleton<IContentService, ContentService>();
         services.AddSingleton<IDialogManager, DialogManager>();
         var existingDescriptors = services.ToArray();
 

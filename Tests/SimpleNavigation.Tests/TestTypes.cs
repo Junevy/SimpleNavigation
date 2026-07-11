@@ -46,6 +46,27 @@ public sealed class AwarePage : Page, INavigationAware
     }
 }
 
+public sealed class AwareContent : UserControl, INavigationAware
+{
+    public int CallCount { get; private set; }
+
+    public DialogParameters? Parameters { get; private set; }
+
+    public void OnNavigated(DialogParameters? parameters)
+    {
+        CallCount++;
+        Parameters = parameters;
+    }
+}
+
+public sealed class ThrowingAwareContent : UserControl, INavigationAware
+{
+    public void OnNavigated(DialogParameters? parameters)
+    {
+        throw new InvalidOperationException("awareness failed");
+    }
+}
+
 public sealed class ThrowingAwarePage : Page, INavigationAware
 {
     public void OnNavigated(DialogParameters? parameters)
