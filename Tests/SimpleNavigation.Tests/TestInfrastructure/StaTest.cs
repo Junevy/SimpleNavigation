@@ -9,6 +9,7 @@ internal static class StaTest
 {
     private static readonly TimeSpan ThreadTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan PumpTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PumpSlice = TimeSpan.FromMilliseconds(50);
 
     public static void Run(Action action)
     {
@@ -31,7 +32,14 @@ internal static class StaTest
             }
             finally
             {
-                Dispatcher.CurrentDispatcher.InvokeShutdown();
+                try
+                {
+                    Dispatcher.CurrentDispatcher.InvokeShutdown();
+                }
+                catch (Exception exception)
+                {
+                    capturedException ??= ExceptionDispatchInfo.Capture(exception);
+                }
             }
         })
         {
@@ -51,9 +59,10 @@ internal static class StaTest
 
     public static void PumpDispatcher()
     {
+        var dispatcher = Dispatcher.CurrentDispatcher;
         var frame = new DispatcherFrame();
 
-        Dispatcher.CurrentDispatcher.BeginInvoke(
+        var idleOperation = dispatcher.BeginInvoke(
             DispatcherPriority.ApplicationIdle,
             new DispatcherOperationCallback(_ =>
             {
@@ -62,7 +71,28 @@ internal static class StaTest
             }),
             null);
 
-        Dispatcher.PushFrame(frame);
+        var timer = new DispatcherTimer(DispatcherPriority.Send, dispatcher)
+        {
+            Interval = PumpSlice,
+        };
+        EventHandler stopFrame = (_, _) => frame.Continue = false;
+        timer.Tick += stopFrame;
+        timer.Start();
+
+        try
+        {
+            Dispatcher.PushFrame(frame);
+        }
+        finally
+        {
+            timer.Stop();
+            timer.Tick -= stopFrame;
+
+            if (idleOperation.Status == DispatcherOperationStatus.Pending)
+            {
+                idleOperation.Abort();
+            }
+        }
     }
 
     public static void PumpUntil(Func<bool> condition)
