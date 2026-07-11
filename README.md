@@ -35,6 +35,7 @@ SimpleNavigation/
     IPageService.cs         # Page 导航
     IContentService.cs      # FrameworkElement 内容导航
     INavigationAware.cs     # 导航完成通知
+    IPageAware.cs           # 兼容旧代码，继承 INavigationAware
     IDialogService.cs       # Window 显示服务
     IDialogAware.cs         # Window 导航与关闭通知
     IDialogManager.cs       # Window 实例管理
@@ -66,7 +67,9 @@ services.AddSingleton<HomeViewModel>();
 
 // 路由扩展可同时注册 View/ViewModel，并可选择添加字符串别名。
 services.AddPage<SettingsPage>("settings");
+services.AddPage<ProfilePage, ProfileViewModel>();
 services.AddPage<ReportsPage, ReportsViewModel>("reports");
+services.AddContent<HelpView>("help");
 services.AddContent<DashboardView, DashboardViewModel>();
 services.AddContent<StatusView, StatusViewModel>("status");
 
@@ -75,7 +78,7 @@ var provider = services.BuildServiceProvider();
 
 `AddPage` 与 `AddContent` 使用 `TryAddTransient` 注册 View 和可选的 ViewModel，不会覆盖在它们之前添加的注册。需要自定义生命周期或工厂时，应先使用标准 DI 方法注册对应服务。这些扩展方法不会创建或设置 View 的 `DataContext`。
 
-只有带 `string key` 的重载会注册路由别名。Page 与 Content 的 key 空间相互独立、区分大小写，同一空间内不能重复注册 key。
+双泛型无 key 的重载只注册 View 和 ViewModel；单泛型加 key 的重载注册 View 与路由别名；双泛型加 key 的重载同时注册 View、ViewModel 与路由别名。Page 与 Content 的 key 空间相互独立、区分大小写，同一空间内不能重复注册 key。
 
 ## 声明导航区域
 
