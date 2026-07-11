@@ -51,9 +51,9 @@ An internal host adapter resolver validates each declared host. The resolver che
 - `Frame`, owned by `PageService` and the frame adapter.
 - Non-`Frame` `ContentControl`, owned by `ContentService` and the content-control adapter.
 
-The static declaration layer maintains weak registration records and publishes internal registration changes. A newly created `RegionManager` reads the current weak snapshot before subscribing to subsequent changes. This prevents regions declared during XAML initialization from being lost when DI creates the manager later.
+The static declaration layer maintains weak registration records and publishes internal registration changes. A newly created `RegionManager` subscribes to changes before importing the current weak snapshot; registering the same name and host twice is idempotent. This ordering prevents both a snapshot-to-subscription race and regions declared during XAML initialization from being lost when DI creates the manager later.
 
-Changing a region name removes the old registration before adding the new registration. Clearing the property or unloading the host unregisters it. Loading it again restores the registration. Static declarations use weak references so an abandoned visual tree is not retained by the attached-property infrastructure.
+Changing a region name removes the old registration before adding the new registration. Clearing the property or unloading the host unregisters its attached-property ownership. Loading it again restores that ownership with a new activation token, so a delayed notification from an older load cycle cannot remove the new registration. Static declarations use weak references so an abandoned visual tree is not retained by the attached-property infrastructure.
 
 ### Region manager
 
@@ -76,6 +76,8 @@ public interface IRegionManager
 `RegionManager` is registered as a singleton by `RegisterNavigationService`. It owns named lookup, imports attached-property declarations, and unsubscribes from static declaration notifications when disposed. The element argument on `UnregisterRegion` prevents a stale unload notification from removing a newer host that reused the same name.
 
 Both attached-property and programmatic registration pass through the same adapter resolver. Programmatic callers cannot register an unsupported host type to bypass `Region` validation. Named manager entries hold weak host references and remove dead entries during lookup or replacement.
+
+Programmatic and attached-property ownership are tracked independently for the same name and host. Public `RegisterRegion` and `UnregisterRegion` add or remove only programmatic ownership. Internal declaration notifications add or remove a specific activation token. A region remains available while either ownership source is active. This prevents `Unloaded` from accidentally removing a programmatically registered region and prevents a stale unload token from removing a reloaded declaration.
 
 Only one live host may own a region name. A second live host with the same name is a configuration error. A dead weak registration may be cleaned up and replaced.
 
@@ -298,6 +300,7 @@ Coverage includes:
 - `Region` declaration on `Frame` and ordinary `ContentControl`.
 - Rename, clear, unload, reload, weak cleanup, late `RegionManager` creation, and duplicate region detection.
 - Programmatic register, unregister, unregistration ownership, untyped lookup, and typed lookup.
+- Mixed programmatic and attached ownership, including unload/reload activation-token ordering.
 - Rejection of unsupported hosts through both attached-property and programmatic registration paths.
 - All six `AddPage` and `AddContent` overloads.
 - Default transient registration, preservation of an existing singleton, duplicate keys, separate page/content key spaces, and key validation.
