@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+using SimpleNavigation.Common;
 using SimpleNavigation.Extensions;
 using SimpleNavigation.Interface;
+using SimpleNavigation.Services;
 using SimpleNavigation.Tests.TestInfrastructure;
 using System.Windows;
 
@@ -29,6 +31,63 @@ public sealed class NavigationExtensionsTests
                 provider.GetRequiredService<IRegionManager>(),
                 provider.GetRequiredService<IRegionManager>());
         });
+    }
+
+    [Fact]
+    public void RegisterNavigationService_RegistersConcreteRegionManagerAsSingleton()
+    {
+        var services = new ServiceCollection();
+        services.RegisterNavigationService();
+        using var provider = services.BuildServiceProvider();
+
+        var first = provider.GetRequiredService<IRegionManager>();
+        var second = provider.GetRequiredService<IRegionManager>();
+
+        Assert.IsType<RegionManager>(first);
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void RegisterNavigationService_RegistersInternalRouteRegistryAsSingleton()
+    {
+        var services = new ServiceCollection();
+        services.RegisterNavigationService();
+        var descriptor = Assert.Single(
+            services,
+            item => item.ServiceType.FullName ==
+                "SimpleNavigation.Common.NavigationRouteRegistry");
+        using var provider = services.BuildServiceProvider();
+
+        var first = provider.GetRequiredService(descriptor.ServiceType);
+        var second = provider.GetRequiredService(descriptor.ServiceType);
+
+        Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void RegisterNavigationService_PreservesEarlierCoreRegistrations()
+    {
+        var services = new ServiceCollection();
+        var regionManager = new RegionManager();
+        services.AddSingleton<IRegionManager>(regionManager);
+        services.AddSingleton<IDialogService, DialogService>();
+        services.AddSingleton<IPageService, PageService>();
+        services.AddSingleton<IDialogManager, DialogManager>();
+        var existingDescriptors = services.ToArray();
+
+        services.RegisterNavigationService();
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Equal(existingDescriptors.Length + 1, services.Count);
+        foreach (var descriptor in existingDescriptors)
+        {
+            Assert.Same(
+                descriptor,
+                Assert.Single(services, item => item.ServiceType == descriptor.ServiceType));
+        }
+
+        Assert.Same(regionManager, provider.GetRequiredService<IRegionManager>());
     }
 
     [Fact]
@@ -89,6 +148,18 @@ public sealed class NavigationExtensionsTests
     }
 
     [Fact]
+    public void DuplicateContentKey_IsRejected()
+    {
+        var services = new ServiceCollection();
+        services.AddContent<TestContent>("main");
+
+        var exception = Assert.Throws<ArgumentException>(
+            () => services.AddContent<TestContent, TestViewModel>("main"));
+
+        Assert.Equal("key", exception.ParamName);
+    }
+
+    [Fact]
     public void SameKeyAcrossPageAndContentCategories_IsAllowed()
     {
         var services = new ServiceCollection();
@@ -116,6 +187,18 @@ public sealed class NavigationExtensionsTests
     {
         var exception = Assert.Throws<ArgumentException>(
             () => new ServiceCollection().AddPage<FirstPage>(key!));
+
+        Assert.Equal("key", exception.ParamName);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void InvalidContentRouteKey_IsRejected(string? key)
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => new ServiceCollection().AddContent<TestContent>(key!));
 
         Assert.Equal("key", exception.ParamName);
     }
