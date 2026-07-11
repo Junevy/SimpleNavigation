@@ -11,6 +11,20 @@ namespace SimpleNavigation.Tests;
 public class ContentServiceTests
 {
     [Fact]
+    public void ContentHostAdapterContractAcceptsAnyFrameworkElementHost()
+    {
+        var adapterType = typeof(IContentService).Assembly.GetType(
+            "SimpleNavigation.Common.IContentRegionHostAdapter",
+            throwOnError: true)!;
+        var present = adapterType.GetMethod("Present");
+
+        Assert.NotNull(present);
+        Assert.Equal(
+            typeof(FrameworkElement),
+            present!.GetParameters()[0].ParameterType);
+    }
+
+    [Fact]
     public void GenericAndTypeNavigationDoNotRequireRoutes()
     {
         StaTest.Run(() =>
@@ -190,6 +204,38 @@ public class ContentServiceTests
     }
 
     [Fact]
+    public void HostPresentationExceptionPropagatesWithoutNotifyingAwareness()
+    {
+        StaTest.Run(() =>
+        {
+            var content = new AwareContent();
+            var services = new ServiceCollection();
+            services.RegisterNavigationService();
+            services.AddSingleton(content);
+            using var provider = services.BuildServiceProvider();
+            var host = RegisterContentHost(
+                provider,
+                "main",
+                new ThrowingContentControl());
+            var regionManager = provider.GetRequiredService<IRegionManager>();
+
+            try
+            {
+                var exception = Assert.Throws<InvalidOperationException>(() =>
+                    provider.GetRequiredService<IContentService>()
+                        .Navigate<AwareContent>("main"));
+
+                Assert.Equal("presentation failed", exception.Message);
+                Assert.Equal(0, content.CallCount);
+            }
+            finally
+            {
+                regionManager.UnregisterRegion("main", host);
+            }
+        });
+    }
+
+    [Fact]
     public void NavigationRequiresTheHostDispatcherThread()
     {
         ServiceProvider? provider = null;
@@ -221,9 +267,27 @@ public class ContentServiceTests
         IServiceProvider provider,
         string name)
     {
-        var host = new ContentControl();
+        return RegisterContentHost(provider, name, new ContentControl());
+    }
+
+    private static TContentControl RegisterContentHost<TContentControl>(
+        IServiceProvider provider,
+        string name,
+        TContentControl host)
+        where TContentControl : ContentControl
+    {
         provider.GetRequiredService<IRegionManager>().RegisterRegion(name, host);
         return host;
+    }
+
+    private sealed class ThrowingContentControl : ContentControl
+    {
+        protected override void OnContentChanged(
+            object oldContent,
+            object newContent)
+        {
+            throw new InvalidOperationException("presentation failed");
+        }
     }
 
     private sealed class RecordingAwareContent : UserControl, INavigationAware

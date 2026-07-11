@@ -27,7 +27,7 @@ internal interface IPageRegionHostAdapter : IRegionHostAdapter
 
 internal interface IContentRegionHostAdapter : IRegionHostAdapter
 {
-    void Present(ContentControl host, FrameworkElement content);
+    void Present(FrameworkElement host, FrameworkElement content);
 }
 
 internal static class RegionHostAdapterResolver

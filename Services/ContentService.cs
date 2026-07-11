@@ -65,23 +65,27 @@ public class ContentService : IContentService
         DialogParameters? parameters)
     {
         var host = GetRequiredHost(regionName);
-        var adapter = (IContentRegionHostAdapter)
-            RegionHostAdapterResolver.GetRequired(host);
+        var hostAdapter = RegionHostAdapterResolver.GetRequired(host);
+        if (hostAdapter is not IContentRegionHostAdapter adapter)
+        {
+            throw new InvalidOperationException(
+                $"Region '{regionName}' does not support content navigation.");
+        }
+
         adapter.Present(host, content);
         NavigationAwareNotifier.Notify(content, parameters);
     }
 
-    private ContentControl GetRequiredHost(string regionName)
+    private FrameworkElement GetRequiredHost(string regionName)
     {
         var region = regionManager.GetRegion(regionName);
-        if (region is ContentControl host && region is not Frame)
+        if (region != null)
         {
-            return host;
+            return region;
         }
 
-        var actual = region?.GetType().FullName ?? "missing";
         throw new InvalidOperationException(
-            $"Region '{regionName}' must be a non-Frame ContentControl but was '{actual}'.");
+            $"Region '{regionName}' is not registered.");
     }
 
     private static void ValidateContentType(Type targetType)

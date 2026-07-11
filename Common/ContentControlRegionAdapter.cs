@@ -12,9 +12,16 @@ internal sealed class ContentControlRegionAdapter : IContentRegionHostAdapter
         return region is ContentControl && region is not Frame;
     }
 
-    public void Present(ContentControl host, FrameworkElement content)
+    public void Present(FrameworkElement host, FrameworkElement content)
     {
+        if (host is not ContentControl contentControl || host is Frame)
+        {
+            throw new ArgumentException(
+                $"Host type '{host.GetType().FullName}' must be a non-Frame ContentControl.",
+                nameof(host));
+        }
+
         host.Dispatcher.VerifyAccess();
-        host.Content = content;
+        contentControl.Content = content;
     }
 }
