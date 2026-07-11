@@ -136,7 +136,11 @@ public class ContentServiceTests
             Assert.Throws<ArgumentException>(() => service.Navigate("frame", typeof(string)));
             Assert.Throws<ArgumentException>(() => service.Navigate<FirstPage>("frame"));
             Assert.Throws<ArgumentException>(() => service.Navigate("frame", typeof(Window)));
-            Assert.Throws<InvalidOperationException>(() => service.Navigate<TestContent>("frame"));
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => service.Navigate<TestContent>("frame"));
+            Assert.Contains("frame", exception.Message);
+            Assert.Contains(typeof(Frame).FullName!, exception.Message);
+            Assert.Contains("non-Frame ContentControl", exception.Message);
             GC.KeepAlive(frame);
         });
     }
@@ -153,8 +157,11 @@ public class ContentServiceTests
             var host = RegisterContentHost(provider, "main");
             var service = provider.GetRequiredService<IContentService>();
 
-            Assert.Throws<InvalidOperationException>(
+            var missingRegionException = Assert.Throws<InvalidOperationException>(
                 () => service.Navigate<TestContent>("missing"));
+            Assert.Contains("Region 'missing'", missingRegionException.Message);
+            Assert.Contains("was 'missing'", missingRegionException.Message);
+            Assert.Contains("non-Frame ContentControl", missingRegionException.Message);
             Assert.Throws<KeyNotFoundException>(
                 () => service.Navigate("main", "unknown"));
             var exception = Assert.Throws<InvalidOperationException>(

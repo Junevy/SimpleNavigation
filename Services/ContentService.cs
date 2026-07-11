@@ -68,8 +68,7 @@ public class ContentService : IContentService
         var hostAdapter = RegionHostAdapterResolver.GetRequired(host);
         if (hostAdapter is not IContentRegionHostAdapter adapter)
         {
-            throw new InvalidOperationException(
-                $"Region '{regionName}' does not support content navigation.");
+            throw CreateInvalidHostException(regionName, host);
         }
 
         adapter.Present(host, content);
@@ -84,8 +83,17 @@ public class ContentService : IContentService
             return region;
         }
 
-        throw new InvalidOperationException(
-            $"Region '{regionName}' is not registered.");
+        throw CreateInvalidHostException(regionName, null);
+    }
+
+    private static InvalidOperationException CreateInvalidHostException(
+        string regionName,
+        FrameworkElement? host)
+    {
+        var actual = host?.GetType().FullName ?? "missing";
+        return new InvalidOperationException(
+            $"Region '{regionName}' must be a non-Frame ContentControl or another host " +
+            $"with a content navigation adapter but was '{actual}'.");
     }
 
     private static void ValidateContentType(Type targetType)
