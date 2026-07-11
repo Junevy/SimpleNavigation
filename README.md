@@ -8,7 +8,7 @@ SimpleNavigation 是一个基于 `Microsoft.Extensions.DependencyInjection` 的�
 
 - `PageService`：在命名的 `Frame` 区域中导航 `Page`，支持返回上一页。
 - `ContentService`：在命名的非 `Frame` `ContentControl` 区域中显示 `UserControl`、自定义 `ContentControl` 或其他非 `Page`、非 `Window` 的 `FrameworkElement`。
-- `DialogService`：通过 DI 创建并显示 `Window`，支持模态/非模态窗口、参数传递与结果返回。
+- `DialogService`：通过 DI 创建并显示 `Window`；当前可靠路径是非模态显示、参数传递与关闭请求。
 - `RegionManager`：统一管理 XAML 声明或代码注册的命名区域，并以弱引用保存区域宿主。
 
 导航目标全部由应用的 DI 容器创建。类库不设置 `DataContext`，因此 View 与 ViewModel 的构造注入和绑定方式仍由应用决定。
@@ -200,18 +200,15 @@ services.AddTransient<TestWindow>();
 services.AddTransient<TestViewModel>();
 ```
 
-使用 `IDialogService` 显示非模态或模态窗口：
+使用 `IDialogService` 显示非模态窗口：
 
 ```csharp
 var input = new DialogParameters("id", 42);
 
 dialogService.Show<TestWindow>(input);
-
-DialogParameters? result = dialogService.ShowDialog<TestWindow>(input);
-var saved = result?.Get<bool>("saved");
 ```
 
-Window 或它的 `DataContext` 可以实现 `IDialogAware` 来接收参数和请求关闭：
+对于 `Show<T>`，Window 或它的 `DataContext` 可以实现 `IDialogAware` 来接收参数和请求关闭：
 
 ```csharp
 public sealed class TestViewModel : IDialogAware
@@ -223,12 +220,14 @@ public sealed class TestViewModel : IDialogAware
         var id = parameters?.Get<int>("id");
     }
 
-    public void Save()
+    public void Close()
     {
-        RequestClose?.Invoke(new DialogParameters("saved", true));
+        RequestClose?.Invoke(null);
     }
 }
 ```
+
+`ShowDialog<T>` 当前的关闭/结果流程存在已知限制：其 `Closing` 处理会取消关闭，并可能在关闭请求中再次调用 `Close`。在 `DialogService` 修正前，不应依赖该方法完成模态关闭或返回结果。
 
 `DialogManager` 使用弱引用缓存同类型 Window，并在 Window 关闭后移除记录。
 
@@ -253,9 +252,11 @@ var value = byKey.Get<string>("key");
 
 ## DI 生命周期
 
-`IPageService` 与 `IContentService` 注册为 singleton，并通过创建它们的 `IServiceProvider` 解析导航目标。若它们由根容器创建，那么在启用 `ValidateScopes` 时，从根容器解析 scoped 服务是无效的；从根容器解析的 disposable transient 会由 Microsoft DI 保留到根容器释放。
+`RegisterNavigationService()` 默认把 `IPageService`、`IContentService`、`IDialogService` 和 `IDialogManager` 注册为 singleton。Page/Content 导航服务与 `DialogManager` 会捕获创建它们的 `IServiceProvider`（通常是根容器）；仅创建或持有一个子 scope 不会把这些 singleton 的解析切换到该 scope。
 
-类库不会为每次导航创建或释放 scope，因为已显示 View 的生命周期属于应用。需要 scoped 或 disposable View/ViewModel 对象图的应用，必须自行持有合适的 scope，并制定与界面显示周期匹配的释放策略。
+因此，在启用 `ValidateScopes` 时，从根容器解析 scoped View、ViewModel 或 Window 对象图是无效的；从根容器解析的 disposable transient 对象会由 Microsoft DI 保留到根容器释放。类库不会为导航或窗口创建、持有或释放 scope，因为已显示 UI 的生命周期属于应用。
+
+需要 scoped 或 disposable View/ViewModel/Window 对象图的应用，必须在调用 `RegisterNavigationService()` 前覆盖相关导航服务和管理器的生命周期或解析策略（其 `TryAdd` 注册会保留先前注册），从应用持有的 scope 解析这些服务，并让 scope 的释放时机与对应 UI 生命周期一致。
 
 ## 区域宿主扩展边界
 
