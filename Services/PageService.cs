@@ -1,76 +1,128 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using SimpleNavigation.Common;
 using SimpleNavigation.Interface;
-using System.Collections.Concurrent;
 using System.Windows.Controls;
 
-namespace SimpleNavigation.Services
+namespace SimpleNavigation.Services;
+
+public class PageService : IPageService
 {
-    public class PageService : IPageService
+    private readonly IServiceProvider provider;
+    private readonly IRegionManager regionManager;
+    private readonly NavigationRouteRegistry routes;
+
+    public PageService(IServiceProvider provider, IRegionManager regionManager)
     {
-        private readonly ConcurrentDictionary<string, Frame> regions = new();
-        private readonly IServiceProvider provider;
+        this.provider = provider;
+        this.regionManager = regionManager;
+        routes = provider.GetRequiredService<NavigationRouteRegistry>();
+    }
 
-        public PageService(IServiceProvider provider)
+    public void Navigate<TPage>(
+        string regionName,
+        DialogParameters? parameters = null)
+        where TPage : Page
+    {
+        ValidateRegionName(regionName);
+        NavigateCore(
+            regionName,
+            provider.GetRequiredService<TPage>(),
+            parameters);
+    }
+
+    public void Navigate(
+        string regionName,
+        Type targetType,
+        DialogParameters? parameters = null)
+    {
+        ValidateRegionName(regionName);
+        ValidatePageType(targetType);
+        var page = provider.GetRequiredService(targetType) as Page
+            ?? throw new InvalidOperationException(
+                $"Resolved service '{targetType.FullName}' is not a Page.");
+        NavigateCore(regionName, page, parameters);
+    }
+
+    public void Navigate(
+        string regionName,
+        string key,
+        DialogParameters? parameters = null)
+    {
+        ValidateRegionName(regionName);
+        var targetType = routes.GetRequiredPageType(key);
+        var page = provider.GetRequiredService(targetType) as Page
+            ?? throw new InvalidOperationException(
+                $"Resolved service '{targetType.FullName}' is not a Page.");
+        NavigateCore(regionName, page, parameters);
+    }
+
+    public void GoBack(string regionName)
+    {
+        var frame = GetRequiredFrame(regionName);
+        var adapter = (IPageRegionHostAdapter)
+            RegionHostAdapterResolver.GetRequired(frame);
+        if (adapter.CanGoBack(frame))
         {
-            this.provider = provider;
-            RegionService.RegionRegisted += (regionName, frame) => RegisterRegion(regionName, frame);
+            adapter.GoBack(frame);
         }
+    }
 
-        public void RegisterRegion(string regionName, Frame frame)
+    [Obsolete("Use GoBack instead.")]
+    public void Goback(string regionName)
+    {
+        GoBack(regionName);
+    }
+
+    private void NavigateCore(
+        string regionName,
+        Page page,
+        DialogParameters? parameters)
+    {
+        var frame = GetRequiredFrame(regionName);
+        var adapter = (IPageRegionHostAdapter)
+            RegionHostAdapterResolver.GetRequired(frame);
+        if (adapter.Navigate(frame, page))
         {
-            if (!string.IsNullOrWhiteSpace(regionName) && frame != null)
-                regions[regionName] = frame;
+            NavigationAwareNotifier.Notify(page, parameters);
         }
+    }
 
-        public Frame? GetRegion(string regionName)
+    private Frame GetRequiredFrame(string regionName)
+    {
+        ValidateRegionName(regionName);
+        var region = regionManager.GetRegion(regionName);
+        if (region is Frame frame)
         {
-            regions.TryGetValue(regionName, out var frame);
             return frame;
         }
 
-        public void Goback(string region)
+        var actual = region?.GetType().FullName ?? "missing";
+        throw new InvalidOperationException(
+            $"Region '{regionName}' must be a Frame but was '{actual}'.");
+    }
+
+    private static void ValidatePageType(Type targetType)
+    {
+        if (targetType == null)
         {
-            if (regions.TryGetValue(region, out var frame))
-            {
-                if (frame.CanGoBack)
-                    frame.GoBack();
-            }
+            throw new ArgumentNullException(nameof(targetType));
         }
 
-        public void Navigate<T>(string regionName, DialogParameters? parameters = null) where T : Page
+        if (!typeof(Page).IsAssignableFrom(targetType))
         {
-            var region = GetRegion(regionName);
-            if (region != null)
-            {
-                var page = provider.GetRequiredService<T>();
-
-                //var oldContent = region.Content;
-
-                region.Navigate(page);
-
-                if (page.DataContext is IPageAware pA && parameters != null)
-                {
-                    pA.OnNavigated(parameters);
-                }
-            }
+            throw new ArgumentException(
+                $"Target type '{targetType.FullName}' must derive from Page.",
+                nameof(targetType));
         }
+    }
 
-        public void Navigate(string regionName, Type targetType, DialogParameters? parameters = null)
+    private static void ValidateRegionName(string regionName)
+    {
+        if (string.IsNullOrWhiteSpace(regionName))
         {
-            if (targetType.IsSubclassOf(typeof(Page)))
-            {
-                var region = GetRegion(regionName);
-                if (region != null)
-                {
-                    var page = provider.GetRequiredService(targetType) as Page;
-                    region.Navigate(page);
-                    if (page?.DataContext is IPageAware pA && parameters != null)
-                    {
-                        pA.OnNavigated(parameters);
-                    }
-                }
-            }
+            throw new ArgumentException(
+                "Region name cannot be null or whitespace.",
+                nameof(regionName));
         }
     }
 }

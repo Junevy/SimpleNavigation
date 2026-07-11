@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 
 namespace SimpleNavigation.Common;
 
@@ -13,6 +14,15 @@ internal interface IRegionHostAdapter
     RegionHostKind Kind { get; }
 
     bool CanHandle(FrameworkElement region);
+}
+
+internal interface IPageRegionHostAdapter : IRegionHostAdapter
+{
+    bool Navigate(Frame frame, Page page);
+
+    bool CanGoBack(Frame frame);
+
+    void GoBack(Frame frame);
 }
 
 internal static class RegionHostAdapterResolver
