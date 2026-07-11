@@ -8,6 +8,7 @@ public sealed class RegionManager : IRegionManager, IDisposable
 {
     private readonly Dictionary<string, RegionEntry> regions =
         new(StringComparer.Ordinal);
+    private readonly Action<RegionDeclarationChange> declarationSubscriber;
     private readonly List<RegionDeclarationChange> pendingDeclarationChanges = new();
     private readonly object syncRoot = new();
     private bool isImportingDeclarations = true;
@@ -15,7 +16,8 @@ public sealed class RegionManager : IRegionManager, IDisposable
 
     public RegionManager()
     {
-        Region.Subscribe(OnDeclarationChanged);
+        declarationSubscriber = OnDeclarationChanged;
+        Region.Subscribe(declarationSubscriber);
 
         try
         {
@@ -47,7 +49,7 @@ public sealed class RegionManager : IRegionManager, IDisposable
                 regions.Clear();
             }
 
-            Region.Unsubscribe(OnDeclarationChanged);
+            Region.Unsubscribe(declarationSubscriber);
             throw;
         }
     }
@@ -156,7 +158,7 @@ public sealed class RegionManager : IRegionManager, IDisposable
             regions.Clear();
         }
 
-        Region.Unsubscribe(OnDeclarationChanged);
+        Region.Unsubscribe(declarationSubscriber);
     }
 
     private void OnDeclarationChanged(RegionDeclarationChange change)

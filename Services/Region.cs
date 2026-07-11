@@ -7,8 +7,9 @@ namespace SimpleNavigation.Services;
 public static class Region
 {
     private static readonly object SyncRoot = new();
+    private static readonly object PublicationGate = new();
     private static readonly List<Declaration> Declarations = new();
-    private static readonly List<Action<RegionDeclarationChange>> Subscribers = new();
+    private static readonly List<WeakReference<Action<RegionDeclarationChange>>> Subscribers = new();
     private static long nextActivationToken;
 
     public static readonly DependencyProperty RegionNameProperty =
@@ -52,7 +53,8 @@ public static class Region
 
         lock (SyncRoot)
         {
-            Subscribers.Add(subscriber);
+            PruneDeadSubscribersUnderLock();
+            Subscribers.Add(new WeakReference<Action<RegionDeclarationChange>>(subscriber));
         }
     }
 
@@ -65,7 +67,14 @@ public static class Region
 
         lock (SyncRoot)
         {
-            Subscribers.Remove(subscriber);
+            for (var index = Subscribers.Count - 1; index >= 0; index--)
+            {
+                if (!Subscribers[index].TryGetTarget(out var existingSubscriber) ||
+                    existingSubscriber.Equals(subscriber))
+                {
+                    Subscribers.RemoveAt(index);
+                }
+            }
         }
     }
 
@@ -102,14 +111,46 @@ public static class Region
         }
 
         var regionName = (string)eventArgs.NewValue;
-        ValidateRegionName(regionName);
-        var host = GetRequiredFrameworkElement(dependencyObject);
-        RegionHostAdapterResolver.GetRequired(host);
 
-        ApplyRegionName(host, regionName);
+        try
+        {
+            ValidateRegionName(regionName);
+            var host = GetRequiredFrameworkElement(dependencyObject);
+            RegionHostAdapterResolver.GetRequired(host);
+            ApplyRegionName(host, regionName);
+        }
+        catch (Exception exception)
+        {
+            var originalFailure = ExceptionDispatchInfo.Capture(exception);
+
+            if (!HasMatchingDeclaration(dependencyObject, regionName))
+            {
+                try
+                {
+                    RestoreDependencyPropertyValue(dependencyObject, eventArgs.OldValue);
+                }
+                catch
+                {
+                    // Preserve the validation or registration failure that caused the rollback.
+                }
+            }
+
+            originalFailure.Throw();
+            throw;
+        }
     }
 
     private static void ApplyRegionName(FrameworkElement host, string regionName)
+    {
+        lock (PublicationGate)
+        {
+            ApplyRegionNameUnderPublicationGate(host, regionName);
+        }
+    }
+
+    private static void ApplyRegionNameUnderPublicationGate(
+        FrameworkElement host,
+        string regionName)
     {
         Declaration? createdDeclaration = null;
         List<RegionDeclarationChange> changes;
@@ -158,7 +199,7 @@ public static class Region
                 declaration,
                 host,
                 RegionDeclarationChangeKind.Add));
-            subscribers = Subscribers.ToArray();
+            subscribers = GetLiveSubscribersUnderLock();
         }
 
         if (createdDeclaration != null)
@@ -190,6 +231,14 @@ public static class Region
             return;
         }
 
+        lock (PublicationGate)
+        {
+            ClearDeclarationUnderPublicationGate(host);
+        }
+    }
+
+    private static void ClearDeclarationUnderPublicationGate(FrameworkElement host)
+    {
         Declaration? removedDeclaration;
         List<RegionDeclarationChange> changes;
         Action<RegionDeclarationChange>[] subscribers;
@@ -213,7 +262,7 @@ public static class Region
             }
 
             Declarations.Remove(removedDeclaration);
-            subscribers = Subscribers.ToArray();
+            subscribers = GetLiveSubscribersUnderLock();
         }
 
         DetachLifecycleHandlers(host);
@@ -227,6 +276,14 @@ public static class Region
             return;
         }
 
+        lock (PublicationGate)
+        {
+            ActivateHostUnderPublicationGate(host);
+        }
+    }
+
+    private static void ActivateHostUnderPublicationGate(FrameworkElement host)
+    {
         RegionDeclarationChange? change = null;
         Action<RegionDeclarationChange>[] subscribers = Array.Empty<Action<RegionDeclarationChange>>();
 
@@ -242,7 +299,7 @@ public static class Region
             declaration.IsActive = true;
             declaration.ActivationToken = GetNextActivationTokenUnderLock();
             change = CreateChange(declaration, host, RegionDeclarationChangeKind.Add);
-            subscribers = Subscribers.ToArray();
+            subscribers = GetLiveSubscribersUnderLock();
         }
 
         PublishChanges(new[] { change }, subscribers);
@@ -255,6 +312,14 @@ public static class Region
             return;
         }
 
+        lock (PublicationGate)
+        {
+            DeactivateHostUnderPublicationGate(host);
+        }
+    }
+
+    private static void DeactivateHostUnderPublicationGate(FrameworkElement host)
+    {
         RegionDeclarationChange? change = null;
         Action<RegionDeclarationChange>[] subscribers = Array.Empty<Action<RegionDeclarationChange>>();
 
@@ -269,7 +334,7 @@ public static class Region
 
             declaration.IsActive = false;
             change = CreateChange(declaration, host, RegionDeclarationChangeKind.Remove);
-            subscribers = Subscribers.ToArray();
+            subscribers = GetLiveSubscribersUnderLock();
         }
 
         PublishChanges(new[] { change }, subscribers);
@@ -296,6 +361,36 @@ public static class Region
             PruneDeadDeclarationsUnderLock();
             ValidateAttachedNameAvailabilityUnderLock(host, regionName);
         }
+    }
+
+    private static bool HasMatchingDeclaration(
+        DependencyObject dependencyObject,
+        string regionName)
+    {
+        if (dependencyObject is not FrameworkElement host)
+        {
+            return false;
+        }
+
+        lock (SyncRoot)
+        {
+            var declaration = FindDeclarationUnderLock(host);
+            return declaration != null &&
+                string.Equals(declaration.Name, regionName, StringComparison.Ordinal);
+        }
+    }
+
+    private static void RestoreDependencyPropertyValue(
+        DependencyObject dependencyObject,
+        object? oldValue)
+    {
+        if (oldValue == null || ReferenceEquals(oldValue, DependencyProperty.UnsetValue))
+        {
+            dependencyObject.ClearValue(RegionNameProperty);
+            return;
+        }
+
+        dependencyObject.SetValue(RegionNameProperty, oldValue);
     }
 
     private static void ValidateAttachedNameAvailabilityUnderLock(
@@ -363,6 +458,37 @@ public static class Region
         }
     }
 
+    private static void PruneDeadSubscribersUnderLock()
+    {
+        for (var index = Subscribers.Count - 1; index >= 0; index--)
+        {
+            if (!Subscribers[index].TryGetTarget(out _))
+            {
+                Subscribers.RemoveAt(index);
+            }
+        }
+    }
+
+    private static Action<RegionDeclarationChange>[] GetLiveSubscribersUnderLock()
+    {
+        var liveSubscribers = new List<Action<RegionDeclarationChange>>(Subscribers.Count);
+
+        for (var index = 0; index < Subscribers.Count;)
+        {
+            if (Subscribers[index].TryGetTarget(out var subscriber))
+            {
+                liveSubscribers.Add(subscriber);
+                index++;
+            }
+            else
+            {
+                Subscribers.RemoveAt(index);
+            }
+        }
+
+        return liveSubscribers.ToArray();
+    }
+
     private static long GetNextActivationTokenUnderLock()
     {
         return ++nextActivationToken;
@@ -375,7 +501,6 @@ public static class Region
     {
         return new RegionDeclarationChange(
             declaration.Name,
-            declaration.Host,
             host,
             declaration.ActivationToken,
             kind);
@@ -439,21 +564,17 @@ internal sealed class RegionDeclarationChange
 {
     public RegionDeclarationChange(
         string name,
-        WeakReference<FrameworkElement> hostReference,
         FrameworkElement host,
         long activationToken,
         RegionDeclarationChangeKind kind)
     {
         Name = name;
-        HostReference = hostReference;
         Host = host;
         ActivationToken = activationToken;
         Kind = kind;
     }
 
     public string Name { get; }
-
-    public WeakReference<FrameworkElement> HostReference { get; }
 
     public FrameworkElement Host { get; }
 
