@@ -4,6 +4,8 @@ using SimpleNavigation.Extensions;
 using SimpleNavigation.Interface;
 using SimpleNavigation.Services;
 using SimpleNavigation.Tests.TestInfrastructure;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Windows;
 
 namespace SimpleNavigation.Tests;
@@ -69,7 +71,7 @@ public sealed class NavigationExtensionsTests
     public void RegisterNavigationService_PreservesEarlierCoreRegistrations()
     {
         var services = new ServiceCollection();
-        var regionManager = new RegionManager();
+        using var regionManager = new RegionManager();
         services.AddSingleton<IRegionManager>(regionManager);
         services.AddSingleton<IDialogService, DialogService>();
         services.AddSingleton<IPageService, PageService>();
@@ -88,6 +90,77 @@ public sealed class NavigationExtensionsTests
         }
 
         Assert.Same(regionManager, provider.GetRequiredService<IRegionManager>());
+    }
+
+    [Fact]
+    public void RouteRegistry_MapsRoutesAddedBeforeAndAfterCoreRegistration()
+    {
+        var services = new ServiceCollection();
+        services.AddPage<FirstPage>("shared");
+        services.RegisterNavigationService();
+        services.AddContent<TestContent>("shared");
+        services.AddPage<SecondPage>("second");
+        using var provider = services.BuildServiceProvider();
+        var registry = GetRouteRegistry(services, provider);
+
+        Assert.Equal(
+            typeof(FirstPage),
+            InvokeRouteLookup(registry, "GetRequiredPageType", "shared"));
+        Assert.Equal(
+            typeof(TestContent),
+            InvokeRouteLookup(registry, "GetRequiredContentType", "shared"));
+        Assert.Equal(
+            typeof(SecondPage),
+            InvokeRouteLookup(registry, "GetRequiredPageType", "second"));
+    }
+
+    [Fact]
+    public void RouteRegistry_UsesOrdinalCaseSensitiveKeys()
+    {
+        var services = new ServiceCollection();
+        services.AddPage<FirstPage>("main");
+        services.AddPage<SecondPage>("Main");
+        services.RegisterNavigationService();
+        using var provider = services.BuildServiceProvider();
+        var registry = GetRouteRegistry(services, provider);
+
+        Assert.Equal(
+            typeof(FirstPage),
+            InvokeRouteLookup(registry, "GetRequiredPageType", "main"));
+        Assert.Equal(
+            typeof(SecondPage),
+            InvokeRouteLookup(registry, "GetRequiredPageType", "Main"));
+    }
+
+    [Fact]
+    public void RouteRegistry_UnknownPageAndContentKeysThrowKeyNotFoundException()
+    {
+        var services = new ServiceCollection();
+        services.RegisterNavigationService();
+        using var provider = services.BuildServiceProvider();
+        var registry = GetRouteRegistry(services, provider);
+
+        Assert.Throws<KeyNotFoundException>(
+            () => InvokeRouteLookup(registry, "GetRequiredPageType", "missing"));
+        Assert.Throws<KeyNotFoundException>(
+            () => InvokeRouteLookup(registry, "GetRequiredContentType", "missing"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void RouteRegistry_InvalidPageAndContentKeysThrowArgumentException(string? key)
+    {
+        var services = new ServiceCollection();
+        services.RegisterNavigationService();
+        using var provider = services.BuildServiceProvider();
+        var registry = GetRouteRegistry(services, provider);
+
+        Assert.Throws<ArgumentException>(
+            () => InvokeRouteLookup(registry, "GetRequiredPageType", key));
+        Assert.Throws<ArgumentException>(
+            () => InvokeRouteLookup(registry, "GetRequiredContentType", key));
     }
 
     [Fact]
@@ -201,5 +274,38 @@ public sealed class NavigationExtensionsTests
             () => new ServiceCollection().AddContent<TestContent>(key!));
 
         Assert.Equal("key", exception.ParamName);
+    }
+
+    private static object GetRouteRegistry(
+        IServiceCollection services,
+        IServiceProvider provider)
+    {
+        var descriptor = Assert.Single(
+            services,
+            item => item.ServiceType.FullName ==
+                "SimpleNavigation.Common.NavigationRouteRegistry");
+        return provider.GetRequiredService(descriptor.ServiceType);
+    }
+
+    private static Type InvokeRouteLookup(
+        object registry,
+        string methodName,
+        string? key)
+    {
+        var method = registry.GetType().GetMethod(
+            methodName,
+            BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(method);
+
+        try
+        {
+            return Assert.IsAssignableFrom<Type>(
+                method!.Invoke(registry, new object?[] { key }));
+        }
+        catch (TargetInvocationException exception) when (exception.InnerException != null)
+        {
+            ExceptionDispatchInfo.Capture(exception.InnerException).Throw();
+            throw;
+        }
     }
 }
