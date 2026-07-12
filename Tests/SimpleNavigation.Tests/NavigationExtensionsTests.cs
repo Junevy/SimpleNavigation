@@ -1,7 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
-using SimpleNavigation.Common;
+using SimpleNavigation.Common.Managers;
 using SimpleNavigation.Extensions;
-using SimpleNavigation.Interface;
+using SimpleNavigation.Interface.Managers;
+using SimpleNavigation.Interface.Services;
 using SimpleNavigation.Services;
 using SimpleNavigation.Tests.TestInfrastructure;
 using System.Reflection;

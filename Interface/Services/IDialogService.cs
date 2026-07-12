@@ -1,7 +1,7 @@
 using SimpleNavigation.Common;
 using System.Windows;
 
-namespace SimpleNavigation.Interface
+namespace SimpleNavigation.Interface.Services
 {
     /// <summary>
     /// 窗口服务接口，用于打开新窗口

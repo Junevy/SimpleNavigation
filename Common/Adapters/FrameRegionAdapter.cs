@@ -1,16 +1,14 @@
+using SimpleNavigation.Interface.Adapters;
 using System.Windows;
 using System.Windows.Controls;
 
-namespace SimpleNavigation.Common;
+namespace SimpleNavigation.Common.Adapters;
 
 internal sealed class FrameRegionAdapter : IPageRegionHostAdapter
 {
     public RegionHostKind Kind => RegionHostKind.Page;
 
-    public bool CanHandle(FrameworkElement region)
-    {
-        return region is Frame;
-    }
+    public bool CanHandle(FrameworkElement region) => region is Frame;
 
     public bool Navigate(Frame frame, Page page)
     {

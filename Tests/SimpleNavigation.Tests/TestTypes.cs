@@ -1,5 +1,5 @@
 using SimpleNavigation.Common;
-using SimpleNavigation.Interface;
+using SimpleNavigation.Interface.Awares;
 using System.Windows.Controls;
 
 namespace SimpleNavigation.Tests;

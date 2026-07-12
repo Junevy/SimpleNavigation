@@ -1,5 +1,7 @@
 using SimpleNavigation.Common;
-using SimpleNavigation.Interface;
+using SimpleNavigation.Interface.Awares;
+using SimpleNavigation.Interface.Managers;
+using SimpleNavigation.Interface.Services;
 using System.Windows;
 
 namespace SimpleNavigation.Services
@@ -52,14 +54,10 @@ namespace SimpleNavigation.Services
             {
                 e.Cancel = true;
                 if (s is IDialogAware dialogAware)
-                {
                     dialogAware.RequestClose?.Invoke(result);
-                }
 
                 if (s is Window w && w.DataContext is IDialogAware dialogVmAware)
-                {
                     dialogVmAware.RequestClose?.Invoke(result);
-                }
             };
 
             if (window.DataContext is IDialogAware vm)

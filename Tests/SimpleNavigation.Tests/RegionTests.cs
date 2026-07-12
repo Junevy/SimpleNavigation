@@ -2,9 +2,9 @@ using System.Runtime.CompilerServices;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
-using SimpleNavigation.Common;
 using SimpleNavigation.Services;
 using SimpleNavigation.Tests.TestInfrastructure;
+using SimpleNavigation.Common.Managers;
 
 namespace SimpleNavigation.Tests;
 

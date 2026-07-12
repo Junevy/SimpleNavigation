@@ -1,8 +1,8 @@
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
-using SimpleNavigation.Interface;
+using SimpleNavigation.Interface.Managers;
 
-namespace SimpleNavigation.Common
+namespace SimpleNavigation.Common.Managers
 {
     public class DialogManager : IDialogManager
     {

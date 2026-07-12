@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SimpleNavigation.Common;
-using SimpleNavigation.Interface;
+using SimpleNavigation.Common.Managers;
+using SimpleNavigation.Interface.Managers;
+using SimpleNavigation.Interface.Services;
 using SimpleNavigation.Services;
 using System.Windows;
 using System.Windows.Controls;
@@ -25,9 +27,7 @@ namespace SimpleNavigation.Extensions
             return serviceCollection;
         }
 
-        public static IServiceCollection AddPage<TPage>(
-            this IServiceCollection services,
-            string key)
+        public static IServiceCollection AddPage<TPage>(this IServiceCollection services, string key)
             where TPage : Page
         {
             AddRoute(services, NavigationRouteKind.Page, key, typeof(TPage));
@@ -35,21 +35,16 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        public static IServiceCollection AddPage<TPage, TViewModel>(
-            this IServiceCollection services)
-            where TPage : Page
-            where TViewModel : class
+        public static IServiceCollection AddPage<TPage, TViewModel>(this IServiceCollection services)
+            where TPage : Page where TViewModel : class
         {
             services.TryAddTransient<TPage>();
             services.TryAddTransient<TViewModel>();
             return services;
         }
 
-        public static IServiceCollection AddPage<TPage, TViewModel>(
-            this IServiceCollection services,
-            string key)
-            where TPage : Page
-            where TViewModel : class
+        public static IServiceCollection AddPage<TPage, TViewModel>(this IServiceCollection services, string key)
+            where TPage : Page where TViewModel : class
         {
             AddRoute(services, NavigationRouteKind.Page, key, typeof(TPage));
             services.TryAddTransient<TPage>();
@@ -57,9 +52,7 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        public static IServiceCollection AddContent<TView>(
-            this IServiceCollection services,
-            string key)
+        public static IServiceCollection AddContent<TView>(this IServiceCollection services,string key)
             where TView : FrameworkElement
         {
             ValidateContentType(typeof(TView));
@@ -68,10 +61,8 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        public static IServiceCollection AddContent<TView, TViewModel>(
-            this IServiceCollection services)
-            where TView : FrameworkElement
-            where TViewModel : class
+        public static IServiceCollection AddContent<TView, TViewModel>(this IServiceCollection services)
+            where TView : FrameworkElement where TViewModel : class
         {
             ValidateContentType(typeof(TView));
             services.TryAddTransient<TView>();
@@ -79,11 +70,8 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        public static IServiceCollection AddContent<TView, TViewModel>(
-            this IServiceCollection services,
-            string key)
-            where TView : FrameworkElement
-            where TViewModel : class
+        public static IServiceCollection AddContent<TView, TViewModel>(this IServiceCollection services, string key)
+            where TView : FrameworkElement where TViewModel : class
         {
             ValidateContentType(typeof(TView));
             AddRoute(services, NavigationRouteKind.Content, key, typeof(TView));
@@ -92,11 +80,7 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        private static void AddRoute(
-            IServiceCollection services,
-            NavigationRouteKind kind,
-            string key,
-            Type targetType)
+        private static void AddRoute(IServiceCollection services,  NavigationRouteKind kind, string key, Type targetType)
         {
             if (string.IsNullOrWhiteSpace(key))
             {
@@ -118,8 +102,7 @@ namespace SimpleNavigation.Extensions
                     nameof(key));
             }
 
-            services.AddSingleton(
-                new NavigationRouteRegistration(kind, key, targetType));
+            services.AddSingleton(new NavigationRouteRegistration(kind, key, targetType));
         }
 
         private static void ValidateContentType(Type targetType)

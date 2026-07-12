@@ -1,16 +1,15 @@
+using SimpleNavigation.Interface.Adapters;
 using System.Windows;
 using System.Windows.Controls;
 
-namespace SimpleNavigation.Common;
+namespace SimpleNavigation.Common.Adapters;
 
 internal sealed class ContentControlRegionAdapter : IContentRegionHostAdapter
 {
     public RegionHostKind Kind => RegionHostKind.Content;
 
     public bool CanHandle(FrameworkElement region)
-    {
-        return region is ContentControl && region is not Frame;
-    }
+        => region is ContentControl && region is not Frame;
 
     public void Present(FrameworkElement host, FrameworkElement content)
     {

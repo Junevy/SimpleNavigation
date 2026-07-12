@@ -1,7 +1,10 @@
 using System.Windows;
 
-namespace SimpleNavigation.Interface
+namespace SimpleNavigation.Interface.Managers
 {
+    /// <summary>
+    /// Dialog 管理对象
+    /// </summary>
     public interface IDialogManager
     {
         /// <summary>
