@@ -31,15 +31,15 @@ namespace SimpleNavigation.Extensions
             where TPage : Page
         {
             AddRoute(services, NavigationRouteKind.Page, key, typeof(TPage));
-            services.TryAddTransient<TPage>();
+            services.TryAddSingleton<TPage>();
             return services;
         }
 
         public static IServiceCollection AddPage<TPage, TViewModel>(this IServiceCollection services)
             where TPage : Page where TViewModel : class
         {
-            services.TryAddTransient<TPage>();
-            services.TryAddTransient<TViewModel>();
+            services.TryAddSingleton<TPage>();
+            services.TryAddSingleton<TViewModel>();
             return services;
         }
 
@@ -47,8 +47,8 @@ namespace SimpleNavigation.Extensions
             where TPage : Page where TViewModel : class
         {
             AddRoute(services, NavigationRouteKind.Page, key, typeof(TPage));
-            services.TryAddTransient<TPage>();
-            services.TryAddTransient<TViewModel>();
+            services.TryAddSingleton<TPage>();
+            services.TryAddSingleton<TViewModel>();
             return services;
         }
 
@@ -57,7 +57,7 @@ namespace SimpleNavigation.Extensions
         {
             ValidateContentType(typeof(TView));
             AddRoute(services, NavigationRouteKind.Content, key, typeof(TView));
-            services.TryAddTransient<TView>();
+            services.TryAddSingleton<TView>();
             return services;
         }
 
@@ -65,8 +65,8 @@ namespace SimpleNavigation.Extensions
             where TView : FrameworkElement where TViewModel : class
         {
             ValidateContentType(typeof(TView));
-            services.TryAddTransient<TView>();
-            services.TryAddTransient<TViewModel>();
+            services.TryAddSingleton<TView>();
+            services.TryAddSingleton<TViewModel>();
             return services;
         }
 
@@ -75,8 +75,8 @@ namespace SimpleNavigation.Extensions
         {
             ValidateContentType(typeof(TView));
             AddRoute(services, NavigationRouteKind.Content, key, typeof(TView));
-            services.TryAddTransient<TView>();
-            services.TryAddTransient<TViewModel>();
+            services.TryAddSingleton<TView>();
+            services.TryAddSingleton<TViewModel>();
             return services;
         }
 
