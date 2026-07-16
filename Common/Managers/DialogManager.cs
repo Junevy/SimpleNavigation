@@ -7,36 +7,119 @@ namespace SimpleNavigation.Common.Managers
     public class DialogManager : IDialogManager
     {
         private readonly IServiceProvider provider;
-        private Dictionary<Type, WeakReference<Window>> dialogWindows = new();
+        private readonly object syncRoot = new();
+        private readonly Dictionary<Type, WeakReference<Window>> dialogWindows = new();
 
         public DialogManager(IServiceProvider provider)
         {
-            this.provider = provider;
+            this.provider = provider ?? throw new ArgumentNullException(nameof(provider));
         }
 
         private void OnWindowClosed(object? sender, EventArgs e)
         {
-            if (sender == null) return;
+            if (sender is not Window closedWindow) return;
 
-            var type = sender.GetType();
-            if (dialogWindows.ContainsKey(type))
-                dialogWindows.Remove(type);
+            lock (syncRoot)
+            {
+                Type? matchingType = null;
+
+                foreach (var dialogWindow in dialogWindows)
+                {
+                    if (dialogWindow.Value.TryGetTarget(out var cachedWindow)
+                        && ReferenceEquals(cachedWindow, closedWindow))
+                    {
+                        matchingType = dialogWindow.Key;
+                        break;
+                    }
+                }
+
+                if (matchingType != null)
+                {
+                    dialogWindows.Remove(matchingType);
+                }
+            }
+        }
+
+        public Window GetOrCreateWindow(Type windowType)
+        {
+            ValidateWindowType(windowType);
+
+            var existingWindow = GetExistingWindowCore(windowType);
+            if (existingWindow != null)
+            {
+                return existingWindow;
+            }
+
+            var service = provider.GetRequiredService(windowType);
+            if (service is not Window newWindow)
+            {
+                throw new InvalidOperationException(
+                    $"The service registered for window type '{windowType.FullName}' resolved to " +
+                    $"'{service.GetType().FullName}', which is not a '{typeof(Window).FullName}'.");
+            }
+
+            lock (syncRoot)
+            {
+                if (dialogWindows.TryGetValue(windowType, out var weakWindow))
+                {
+                    if (weakWindow.TryGetTarget(out existingWindow))
+                    {
+                        return existingWindow;
+                    }
+
+                    dialogWindows.Remove(windowType);
+                }
+
+                dialogWindows[windowType] = new WeakReference<Window>(newWindow);
+            }
+
+            newWindow.Closed += OnWindowClosed;
+            return newWindow;
+        }
+
+        public Window? GetExistingWindow(Type windowType)
+        {
+            ValidateWindowType(windowType);
+            return GetExistingWindowCore(windowType);
         }
 
         public T? GetDialogWindow<T>() where T : Window
         {
-            if (dialogWindows.ContainsKey(typeof(T)))
-                return dialogWindows[typeof(T)].TryGetTarget(out var window) ? window as T : null;
+            return (T)GetOrCreateWindow(typeof(T));
+        }
 
-            var weakWindow = new WeakReference<Window>(provider.GetRequiredService<T>());
-            dialogWindows[typeof(T)] = weakWindow;
+        private Window? GetExistingWindowCore(Type windowType)
+        {
+            lock (syncRoot)
+            {
+                if (!dialogWindows.TryGetValue(windowType, out var weakWindow))
+                {
+                    return null;
+                }
 
-            var getResult = weakWindow.TryGetTarget(out var w);
-            if (!getResult || w == null) return null;
+                if (weakWindow.TryGetTarget(out var window))
+                {
+                    return window;
+                }
 
-            w.Closed += OnWindowClosed;
+                dialogWindows.Remove(windowType);
+                return null;
+            }
+        }
 
-            return w as T;
+        private static void ValidateWindowType(Type windowType)
+        {
+            if (windowType == null)
+            {
+                throw new ArgumentNullException(nameof(windowType));
+            }
+
+            if (!typeof(Window).IsAssignableFrom(windowType))
+            {
+                throw new ArgumentException(
+                    $"Type '{windowType.FullName}' must derive from '{typeof(Window).FullName}'.",
+                    nameof(windowType));
+            }
         }
     }
 }
