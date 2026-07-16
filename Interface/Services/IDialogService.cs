@@ -11,16 +11,30 @@ namespace SimpleNavigation.Interface.Services
         /// <summary>
         /// 显示一个新Dialog
         /// </summary>
-        /// <typeparam name="T">Dialog类型</typeparam>
+        /// <typeparam name="TWindow">Dialog类型</typeparam>
         /// <param name="parameters">Dialog参数</param>
-        public void Show<T>(DialogParameters? parameters = null) where T : Window;
+        public void Show<TWindow>(DialogParameters? parameters = null) where TWindow : Window;
+
+        public void Show(Type targetType, DialogParameters? parameters = null);
+
+        public void Show(string key, DialogParameters? parameters = null);
 
         /// <summary>
         /// 显示一个新Dialog并等待用户关闭
         /// </summary>
-        /// <typeparam name="T">Dialog类型</typeparam>
+        /// <typeparam name="TWindow">Dialog类型</typeparam>
         /// <param name="parameters">Dialog参数</param>
         /// <returns>Dialog关闭时返回的参数</returns>
-        public DialogParameters? ShowDialog<T>(DialogParameters? parameters = null) where T : Window;
+        public DialogParameters? ShowDialog<TWindow>(DialogParameters? parameters = null) where TWindow : Window;
+
+        public DialogParameters? ShowDialog(Type targetType, DialogParameters? parameters = null);
+
+        public DialogParameters? ShowDialog(string key, DialogParameters? parameters = null);
+
+        public bool Close<TWindow>() where TWindow : Window;
+
+        public bool Close(Type targetType);
+
+        public bool Close(string key);
     }
 }

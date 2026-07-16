@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using SimpleNavigation.Common;
 using SimpleNavigation.Interface.Awares;
 using SimpleNavigation.Interface.Managers;
@@ -12,88 +13,267 @@ namespace SimpleNavigation.Services
     public class DialogService : IDialogService
     {
         private readonly IDialogManager dialogManager;
+        private readonly NavigationRouteRegistry routes;
+        private readonly object subscriptionSyncRoot = new();
+        private readonly Dictionary<Window, NonModalSubscription> nonModalSubscriptions = new();
 
-        public DialogService(IDialogManager dialogManager)
+        public DialogService(IServiceProvider provider, IDialogManager dialogManager)
         {
-            this.dialogManager = dialogManager;
+            if (provider == null)
+                throw new ArgumentNullException(nameof(provider));
+
+            this.dialogManager = dialogManager
+                ?? throw new ArgumentNullException(nameof(dialogManager));
+            routes = provider.GetRequiredService<NavigationRouteRegistry>();
         }
 
-        public void Show<T>(DialogParameters? parameters = null) where T : Window
+        public void Show<TWindow>(DialogParameters? parameters = null) where TWindow : Window
         {
-            var window = dialogManager.GetDialogWindow<T>();
+            Show(typeof(TWindow), parameters);
+        }
 
-            if (window == null)
-                return;
+        public void Show(Type targetType, DialogParameters? parameters = null)
+        {
+            ValidateWindowType(targetType);
+            ShowCore(dialogManager.GetOrCreateWindow(targetType), parameters);
+        }
 
-            if (window.DataContext is IDialogAware vm)
-            {
-                vm.OnNavigated(parameters);
-                vm.RequestClose = (p) => window.Close();
-            }
+        public void Show(string key, DialogParameters? parameters = null)
+        {
+            var targetType = routes.GetRequiredDialogType(key);
+            ValidateWindowType(targetType);
+            ShowCore(dialogManager.GetOrCreateWindow(targetType), parameters);
+        }
 
-            if (window is IDialogAware w)
-            {
-                w.OnNavigated(parameters);
-                w.RequestClose = (p) => window.Close();
-            }
+        public DialogParameters? ShowDialog<TWindow>(DialogParameters? parameters = null)
+            where TWindow : Window
+        {
+            return ShowDialog(typeof(TWindow), parameters);
+        }
 
-            window.Show();
+        public DialogParameters? ShowDialog(Type targetType, DialogParameters? parameters = null)
+        {
+            ValidateWindowType(targetType);
+            return ShowDialogCore(dialogManager.GetOrCreateWindow(targetType), parameters);
+        }
+
+        public DialogParameters? ShowDialog(string key, DialogParameters? parameters = null)
+        {
+            var targetType = routes.GetRequiredDialogType(key);
+            ValidateWindowType(targetType);
+            return ShowDialogCore(dialogManager.GetOrCreateWindow(targetType), parameters);
+        }
+
+        public bool Close<TWindow>() where TWindow : Window
+        {
+            return Close(typeof(TWindow));
+        }
+
+        public bool Close(Type targetType)
+        {
+            ValidateWindowType(targetType);
+            return CloseCore(dialogManager.GetExistingWindow(targetType));
+        }
+
+        public bool Close(string key)
+        {
+            var targetType = routes.GetRequiredDialogType(key);
+            ValidateWindowType(targetType);
+            return CloseCore(dialogManager.GetExistingWindow(targetType));
+        }
+
+        private void ShowCore(Window window, DialogParameters? parameters)
+        {
+            window.Dispatcher.VerifyAccess();
+            ConfigureNonModalAwareness(window, parameters);
+
+            if (!window.IsVisible)
+                window.Show();
+
             window.Activate();
-
         }
 
-        public DialogParameters? ShowDialog<T>(DialogParameters? parameters = null) where T : Window
+        private DialogParameters? ShowDialogCore(Window window, DialogParameters? parameters)
         {
-            var window = dialogManager.GetDialogWindow<T>();
-            if (window == null)
-                return null;
+            window.Dispatcher.VerifyAccess();
+            RemoveNonModalSubscription(window);
 
             DialogParameters? result = null;
-
-            window.Closing += (s, e) =>
+            var awareTargets = GetAwareTargets(window);
+            Action<DialogParameters?> requestClose = closeResult =>
             {
-                e.Cancel = true;
-                if (s is IDialogAware dialogAware)
-                    dialogAware.RequestClose?.Invoke(result);
-
-                if (s is Window w && w.DataContext is IDialogAware dialogVmAware)
-                    dialogVmAware.RequestClose?.Invoke(result);
+                window.Dispatcher.VerifyAccess();
+                result = closeResult;
+                window.Close();
             };
-
-            if (window.DataContext is IDialogAware vm)
-            {
-                vm.OnNavigated(parameters);
-                vm.RequestClose = (p) =>
-                {
-                    result = p;
-                    window.Close();
-                };
-            }
-
-            if (window is IDialogAware w)
-            {
-                w.OnNavigated(parameters);
-                w.RequestClose = (p) =>
-                {
-                    result = p;
-                    window.Close();
-                };
-            }
 
             try
             {
+                SetRequestClose(awareTargets, requestClose);
+                NotifyAwareTargets(awareTargets, parameters);
                 window.ShowDialog();
-                window.Activate();
+                return result;
             }
             finally
             {
-                if (window.DataContext is IDialogAware cleanupVm)
-                    cleanupVm.RequestClose = null;
-                else if (window is IDialogAware cleanupW)
-                    cleanupW.RequestClose = null;
-
+                ClearRequestClose(awareTargets, requestClose);
             }
-            return result;
+        }
+
+        private bool CloseCore(Window? window)
+        {
+            if (window == null)
+                return false;
+
+            window.Dispatcher.VerifyAccess();
+            var closed = false;
+            EventHandler closedHandler = (_, _) => closed = true;
+            window.Closed += closedHandler;
+
+            try
+            {
+                window.Close();
+                return closed;
+            }
+            finally
+            {
+                window.Closed -= closedHandler;
+            }
+        }
+
+        private void ConfigureNonModalAwareness(Window window, DialogParameters? parameters)
+        {
+            RemoveNonModalSubscription(window);
+
+            var awareTargets = GetAwareTargets(window);
+            Action<DialogParameters?> requestClose = _ =>
+            {
+                window.Dispatcher.VerifyAccess();
+                window.Close();
+            };
+            NonModalSubscription? subscription = null;
+            EventHandler closedHandler = (_, _) =>
+            {
+                if (subscription != null)
+                    RemoveNonModalSubscription(window, subscription);
+            };
+            subscription = new NonModalSubscription(awareTargets, requestClose, closedHandler);
+
+            SetRequestClose(awareTargets, requestClose);
+            window.Closed += closedHandler;
+            lock (subscriptionSyncRoot)
+            {
+                nonModalSubscriptions[window] = subscription;
+            }
+
+            NotifyAwareTargets(awareTargets, parameters);
+        }
+
+        private void RemoveNonModalSubscription(Window window)
+        {
+            NonModalSubscription? subscription;
+            lock (subscriptionSyncRoot)
+            {
+                if (!nonModalSubscriptions.TryGetValue(window, out subscription))
+                    return;
+
+                nonModalSubscriptions.Remove(window);
+            }
+
+            window.Closed -= subscription.ClosedHandler;
+            ClearRequestClose(subscription.AwareTargets, subscription.RequestClose);
+        }
+
+        private void RemoveNonModalSubscription(
+            Window window,
+            NonModalSubscription expectedSubscription)
+        {
+            lock (subscriptionSyncRoot)
+            {
+                if (!nonModalSubscriptions.TryGetValue(window, out var currentSubscription)
+                    || !ReferenceEquals(currentSubscription, expectedSubscription))
+                {
+                    return;
+                }
+
+                nonModalSubscriptions.Remove(window);
+            }
+
+            window.Closed -= expectedSubscription.ClosedHandler;
+            ClearRequestClose(expectedSubscription.AwareTargets, expectedSubscription.RequestClose);
+        }
+
+        private static IDialogAware[] GetAwareTargets(Window window)
+        {
+            var windowAware = window as IDialogAware;
+            var dataContextAware = window.DataContext as IDialogAware;
+
+            if (windowAware == null)
+                return dataContextAware == null ? Array.Empty<IDialogAware>() : new[] { dataContextAware };
+
+            if (dataContextAware == null || ReferenceEquals(windowAware, dataContextAware))
+                return new[] { windowAware };
+
+            return new[] { windowAware, dataContextAware };
+        }
+
+        private static void SetRequestClose(
+            IEnumerable<IDialogAware> awareTargets,
+            Action<DialogParameters?> requestClose)
+        {
+            foreach (var aware in awareTargets)
+                aware.RequestClose = requestClose;
+        }
+
+        private static void NotifyAwareTargets(
+            IEnumerable<IDialogAware> awareTargets,
+            DialogParameters? parameters)
+        {
+            foreach (var aware in awareTargets)
+                aware.OnNavigated(parameters);
+        }
+
+        private static void ClearRequestClose(
+            IEnumerable<IDialogAware> awareTargets,
+            Action<DialogParameters?> requestClose)
+        {
+            foreach (var aware in awareTargets)
+            {
+                if (ReferenceEquals(aware.RequestClose, requestClose))
+                    aware.RequestClose = null;
+            }
+        }
+
+        private static void ValidateWindowType(Type targetType)
+        {
+            if (targetType == null)
+                throw new ArgumentNullException(nameof(targetType));
+
+            if (!typeof(Window).IsAssignableFrom(targetType))
+            {
+                throw new ArgumentException(
+                    $"Target type '{targetType.FullName}' must derive from Window.",
+                    nameof(targetType));
+            }
+        }
+
+        private sealed class NonModalSubscription
+        {
+            public NonModalSubscription(
+                IDialogAware[] awareTargets,
+                Action<DialogParameters?> requestClose,
+                EventHandler closedHandler)
+            {
+                AwareTargets = awareTargets;
+                RequestClose = requestClose;
+                ClosedHandler = closedHandler;
+            }
+
+            public IDialogAware[] AwareTargets { get; }
+
+            public Action<DialogParameters?> RequestClose { get; }
+
+            public EventHandler ClosedHandler { get; }
         }
     }
 }
