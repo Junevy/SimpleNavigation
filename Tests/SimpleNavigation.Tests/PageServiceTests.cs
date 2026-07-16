@@ -43,7 +43,7 @@ public class PageServiceTests
             var services = new ServiceCollection();
             services.RegisterNavigationService();
             services.AddSingleton(expected);
-            services.AddPage<FirstPage>("first");
+            services.AddSingletonPage<FirstPage>("first");
             using var provider = services.BuildServiceProvider();
             var frame = RegisterFrame(provider, "main");
             var service = provider.GetRequiredService<IPageService>();

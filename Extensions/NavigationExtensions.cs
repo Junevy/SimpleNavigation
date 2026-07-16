@@ -27,7 +27,7 @@ namespace SimpleNavigation.Extensions
             return serviceCollection;
         }
 
-        public static IServiceCollection AddPage<TPage>(this IServiceCollection services, string key)
+        public static IServiceCollection AddSingletonPage<TPage>(this IServiceCollection services, string key)
             where TPage : Page
         {
             AddRoute(services, NavigationRouteKind.Page, key, typeof(TPage));
@@ -35,7 +35,15 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        public static IServiceCollection AddPage<TPage, TViewModel>(this IServiceCollection services)
+        public static IServiceCollection AddTransientPage<TPage>(this IServiceCollection services, string key)
+            where TPage : Page
+        {
+            AddRoute(services, NavigationRouteKind.Page, key, typeof(TPage));
+            services.TryAddTransient<TPage>();
+            return services;
+        }
+
+        public static IServiceCollection AddSingletonPage<TPage, TViewModel>(this IServiceCollection services)
             where TPage : Page where TViewModel : class
         {
             services.TryAddSingleton<TPage>();
@@ -43,7 +51,15 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        public static IServiceCollection AddPage<TPage, TViewModel>(this IServiceCollection services, string key)
+        public static IServiceCollection AddTransientPage<TPage, TViewModel>(this IServiceCollection services)
+            where TPage : Page where TViewModel : class
+        {
+            services.TryAddTransient<TPage>();
+            services.TryAddTransient<TViewModel>();
+            return services;
+        }
+
+        public static IServiceCollection AddSingletonPage<TPage, TViewModel>(this IServiceCollection services, string key)
             where TPage : Page where TViewModel : class
         {
             AddRoute(services, NavigationRouteKind.Page, key, typeof(TPage));
@@ -52,7 +68,16 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        public static IServiceCollection AddContent<TView>(this IServiceCollection services,string key)
+        public static IServiceCollection AddTransientPage<TPage, TViewModel>(this IServiceCollection services, string key)
+            where TPage : Page where TViewModel : class
+        {
+            AddRoute(services, NavigationRouteKind.Page, key, typeof(TPage));
+            services.TryAddTransient<TPage>();
+            services.TryAddTransient<TViewModel>();
+            return services;
+        }
+
+        public static IServiceCollection AddSingletonContent<TView>(this IServiceCollection services, string key)
             where TView : FrameworkElement
         {
             ValidateContentType(typeof(TView));
@@ -61,7 +86,16 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        public static IServiceCollection AddContent<TView, TViewModel>(this IServiceCollection services)
+        public static IServiceCollection AddTransientContent<TView>(this IServiceCollection services, string key)
+            where TView : FrameworkElement
+        {
+            ValidateContentType(typeof(TView));
+            AddRoute(services, NavigationRouteKind.Content, key, typeof(TView));
+            services.TryAddTransient<TView>();
+            return services;
+        }
+
+        public static IServiceCollection AddSingletonContent<TView, TViewModel>(this IServiceCollection services)
             where TView : FrameworkElement where TViewModel : class
         {
             ValidateContentType(typeof(TView));
@@ -70,13 +104,32 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        public static IServiceCollection AddContent<TView, TViewModel>(this IServiceCollection services, string key)
+        public static IServiceCollection AddTransientContent<TView, TViewModel>(this IServiceCollection services)
+            where TView : FrameworkElement where TViewModel : class
+        {
+            ValidateContentType(typeof(TView));
+            services.TryAddTransient<TView>();
+            services.TryAddTransient<TViewModel>();
+            return services;
+        }
+
+        public static IServiceCollection AddSingletonContent<TView, TViewModel>(this IServiceCollection services, string key)
             where TView : FrameworkElement where TViewModel : class
         {
             ValidateContentType(typeof(TView));
             AddRoute(services, NavigationRouteKind.Content, key, typeof(TView));
             services.TryAddSingleton<TView>();
             services.TryAddSingleton<TViewModel>();
+            return services;
+        }
+
+        public static IServiceCollection AddTransientContent<TView, TViewModel>(this IServiceCollection services, string key)
+            where TView : FrameworkElement where TViewModel : class
+        {
+            ValidateContentType(typeof(TView));
+            AddRoute(services, NavigationRouteKind.Content, key, typeof(TView));
+            services.TryAddTransient<TView>();
+            services.TryAddTransient<TViewModel>();
             return services;
         }
 
@@ -105,7 +158,7 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
-        private static void AddRoute(IServiceCollection services,  NavigationRouteKind kind, string key, Type targetType)
+        private static void AddRoute(IServiceCollection services, NavigationRouteKind kind, string key, Type targetType)
         {
             if (string.IsNullOrWhiteSpace(key))
             {

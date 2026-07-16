@@ -8,7 +8,7 @@
 		<LangVersion>13</LangVersion>
 		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
 		<PackageId>Junevy.SimpleNavigation</PackageId>
-		<Version>2.0.1</Version>
+		<Version>2.2.0</Version>
 		<Authors>Junevy</Authors>
 		<Description>Recommand to use it in conjunction with Communication.Toolkit.Mvvm. The package copywriting for Prism.</Description>
 		<DefaultItemExcludesInProjectFolder>$(DefaultItemExcludesInProjectFolder);Tests/**</DefaultItemExcludesInProjectFolder>

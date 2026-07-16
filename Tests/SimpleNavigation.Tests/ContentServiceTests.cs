@@ -56,7 +56,7 @@ public class ContentServiceTests
             var services = new ServiceCollection();
             services.RegisterNavigationService();
             services.AddSingleton(expected);
-            services.AddContent<TestContent>("content");
+            services.AddSingletonContent<TestContent>("content");
             using var provider = services.BuildServiceProvider();
             var host = RegisterContentHost(provider, "main");
             var service = provider.GetRequiredService<IContentService>();
@@ -180,7 +180,7 @@ public class ContentServiceTests
         {
             var services = new ServiceCollection();
             services.RegisterNavigationService();
-            services.AddContent<TestContent, TestViewModel>();
+            services.AddSingletonContent<TestContent, TestViewModel>();
             using var provider = services.BuildServiceProvider();
             var host = RegisterContentHost(provider, "main");
 

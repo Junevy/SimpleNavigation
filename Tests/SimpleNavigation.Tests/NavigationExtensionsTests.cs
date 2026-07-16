@@ -20,8 +20,8 @@ public sealed class NavigationExtensionsTests
         {
             var services = new ServiceCollection();
             services.RegisterNavigationService();
-            services.AddPage<FirstPage>("page");
-            services.AddContent<TestContent>("content");
+            services.AddTransientPage<FirstPage>("page");
+            services.AddTransientContent<TestContent>("content");
             using var provider = services.BuildServiceProvider();
 
             Assert.NotSame(
@@ -98,10 +98,10 @@ public sealed class NavigationExtensionsTests
     public void RouteRegistry_MapsRoutesAddedBeforeAndAfterCoreRegistration()
     {
         var services = new ServiceCollection();
-        services.AddPage<FirstPage>("shared");
+        services.AddSingletonPage<FirstPage>("shared");
         services.RegisterNavigationService();
-        services.AddContent<TestContent>("shared");
-        services.AddPage<SecondPage>("second");
+        services.AddSingletonContent<TestContent>("shared");
+        services.AddSingletonPage<SecondPage>("second");
         using var provider = services.BuildServiceProvider();
         var registry = GetRouteRegistry(services, provider);
 
@@ -120,8 +120,8 @@ public sealed class NavigationExtensionsTests
     public void RouteRegistry_UsesOrdinalCaseSensitiveKeys()
     {
         var services = new ServiceCollection();
-        services.AddPage<FirstPage>("main");
-        services.AddPage<SecondPage>("Main");
+        services.AddSingletonPage<FirstPage>("main");
+        services.AddSingletonPage<SecondPage>("Main");
         services.RegisterNavigationService();
         using var provider = services.BuildServiceProvider();
         var registry = GetRouteRegistry(services, provider);
@@ -171,8 +171,8 @@ public sealed class NavigationExtensionsTests
         StaTest.Run(() =>
         {
             var services = new ServiceCollection();
-            services.AddPage<FirstPage, TestViewModel>();
-            services.AddContent<TestContent, TestViewModel>();
+            services.AddTransientPage<FirstPage, TestViewModel>();
+            services.AddTransientContent<TestContent, TestViewModel>();
             using var provider = services.BuildServiceProvider();
 
             var page = provider.GetRequiredService<FirstPage>();
@@ -199,8 +199,8 @@ public sealed class NavigationExtensionsTests
             services.AddSingleton(content);
             services.AddSingleton(viewModel);
 
-            services.AddPage<FirstPage, TestViewModel>("page");
-            services.AddContent<TestContent, TestViewModel>("content");
+            services.AddSingletonPage<FirstPage, TestViewModel>("page");
+            services.AddSingletonContent<TestContent, TestViewModel>("content");
             using var provider = services.BuildServiceProvider();
 
             Assert.Same(page, provider.GetRequiredService<FirstPage>());
@@ -213,11 +213,11 @@ public sealed class NavigationExtensionsTests
     public void DuplicateKeyWithinOneCategory_IsRejectedUsingOrdinalMatching()
     {
         var services = new ServiceCollection();
-        services.AddPage<FirstPage>("main");
-        services.AddPage<SecondPage>("Main");
+        services.AddSingletonPage<FirstPage>("main");
+        services.AddSingletonPage<SecondPage>("Main");
 
         var exception = Assert.Throws<ArgumentException>(
-            () => services.AddPage<SecondPage>("main"));
+            () => services.AddSingletonPage<SecondPage>("main"));
 
         Assert.Equal("key", exception.ParamName);
     }
@@ -226,10 +226,10 @@ public sealed class NavigationExtensionsTests
     public void DuplicateContentKey_IsRejected()
     {
         var services = new ServiceCollection();
-        services.AddContent<TestContent>("main");
+        services.AddSingletonContent<TestContent>("main");
 
         var exception = Assert.Throws<ArgumentException>(
-            () => services.AddContent<TestContent, TestViewModel>("main"));
+            () => services.AddSingletonContent<TestContent, TestViewModel>("main"));
 
         Assert.Equal("key", exception.ParamName);
     }
@@ -239,8 +239,8 @@ public sealed class NavigationExtensionsTests
     {
         var services = new ServiceCollection();
 
-        services.AddPage<FirstPage>("main");
-        services.AddContent<TestContent>("main");
+        services.AddSingletonPage<FirstPage>("main");
+        services.AddSingletonContent<TestContent>("main");
     }
 
     [Fact]
@@ -248,10 +248,10 @@ public sealed class NavigationExtensionsTests
     {
         var services = new ServiceCollection();
 
-        Assert.Throws<ArgumentException>(() => services.AddContent<FirstPage>("page"));
-        Assert.Throws<ArgumentException>(() => services.AddContent<Window>("window"));
-        Assert.Throws<ArgumentException>(() => services.AddContent<FirstPage, TestViewModel>());
-        Assert.Throws<ArgumentException>(() => services.AddContent<Window, TestViewModel>("window-vm"));
+        Assert.Throws<ArgumentException>(() => services.AddSingletonContent<FirstPage>("page"));
+        Assert.Throws<ArgumentException>(() => services.AddSingletonContent<Window>("window"));
+        Assert.Throws<ArgumentException>(() => services.AddSingletonContent<FirstPage, TestViewModel>());
+        Assert.Throws<ArgumentException>(() => services.AddSingletonContent<Window, TestViewModel>("window-vm"));
     }
 
     [Theory]
@@ -261,7 +261,7 @@ public sealed class NavigationExtensionsTests
     public void InvalidRouteKey_IsRejected(string? key)
     {
         var exception = Assert.Throws<ArgumentException>(
-            () => new ServiceCollection().AddPage<FirstPage>(key!));
+            () => new ServiceCollection().AddSingletonPage<FirstPage>(key!));
 
         Assert.Equal("key", exception.ParamName);
     }
@@ -273,7 +273,7 @@ public sealed class NavigationExtensionsTests
     public void InvalidContentRouteKey_IsRejected(string? key)
     {
         var exception = Assert.Throws<ArgumentException>(
-            () => new ServiceCollection().AddContent<TestContent>(key!));
+            () => new ServiceCollection().AddSingletonContent<TestContent>(key!));
 
         Assert.Equal("key", exception.ParamName);
     }
@@ -364,8 +364,8 @@ public sealed class NavigationExtensionsTests
     public void DialogRoutes_UseOrdinalCaseSensitiveKeysAndRejectDuplicatesWithinDialogOnly()
     {
         var services = new ServiceCollection();
-        services.AddPage<FirstPage>("main");
-        services.AddContent<TestContent>("main");
+        services.AddSingletonPage<FirstPage>("main");
+        services.AddSingletonContent<TestContent>("main");
         services.AddWindow<FirstWindow>("main");
         services.AddWindow<SecondWindow>("Main");
         services.RegisterNavigationService();
