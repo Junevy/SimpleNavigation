@@ -274,7 +274,7 @@ var value = byKey.Get<string>("key");
 
 `RegisterNavigationService()` 默认把 `IRegionManager`、`IPageService`、`IContentService`、`IDialogService` 和 `IDialogManager` 注册为 singleton。`IRegionManager` 保存命名区域宿主的弱引用，并持有静态 `Region` 声明订阅；它不解析 View 对象图，并会在所属 DI provider 释放时取消订阅。
 
-Page/Content 导航服务以及 singleton 的 `DialogService`/`DialogManager` 会捕获创建它们的 `IServiceProvider`（通常是根容器）；仅创建或持有一个子 scope 不会把这些 singleton 的目标解析切换到该 scope。`AddWindow` 默认注册 transient Window 和 ViewModel，但从根 provider 解析的 disposable transient 或 scoped 对象图仍具有下述既有生命周期限制。
+singleton 的 `PageService`、`ContentService` 和 `DialogManager` 会捕获创建它们的 `IServiceProvider`（通常是根容器）；仅创建或持有一个子 scope 不会把这些 singleton 的目标解析切换到该 scope。`DialogService` 构造时从 provider 取得并保存路由注册表，之后只持有该注册表与 `IDialogManager`，不会保留 provider 或直接解析 Window；Window 对象图由 `DialogManager` 从它捕获的 provider 解析。`AddWindow` 默认注册 transient Window 和 ViewModel，但从根 provider 解析的 disposable transient 或 scoped 对象图仍具有下述既有生命周期限制。
 
 因此，在启用 `ValidateScopes` 时，从根容器解析 scoped View、ViewModel 或 Window 对象图是无效的；从根容器解析的 disposable transient 对象会由 Microsoft DI 保留到根容器释放。类库不会为导航或窗口创建、持有或释放 scope，因为已显示 UI 的生命周期属于应用。
 
