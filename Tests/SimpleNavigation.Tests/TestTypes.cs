@@ -103,6 +103,18 @@ public sealed class ThrowingAwareDialogViewModel : AwareDialogViewModel
     }
 }
 
+public sealed class ToggleThrowAwareDialogViewModel : AwareDialogViewModel
+{
+    public bool ThrowOnNavigated { get; set; }
+
+    public override void OnNavigated(DialogParameters? parameters)
+    {
+        base.OnNavigated(parameters);
+        if (ThrowOnNavigated)
+            throw new InvalidOperationException("dialog awareness failed");
+    }
+}
+
 public sealed class ReplacingAwareDialogViewModel : AwareDialogViewModel
 {
     public Action<DialogParameters?> Replacement { get; } = _ => { };
@@ -127,6 +139,51 @@ public sealed class CancelClosingWindow : Window
 
 public sealed class ReuseWindow : Window
 {
+}
+
+public sealed class ThrowingPresentationWindow : AwareWindow
+{
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        throw new InvalidOperationException("window presentation failed");
+    }
+}
+
+public sealed class SynchronousCloseAwareWindow : AwareWindow
+{
+    public DialogParameters? CloseResult { get; set; }
+
+    public override void OnNavigated(DialogParameters? parameters)
+    {
+        base.OnNavigated(parameters);
+        RequestClose!(CloseResult);
+    }
+}
+
+public sealed class CancelFirstCloseAwareWindow : AwareWindow
+{
+    public bool RequestCloseOnNavigated { get; set; }
+
+    public DialogParameters? CloseResult { get; set; }
+
+    public int ClosingCount { get; private set; }
+
+    public override void OnNavigated(DialogParameters? parameters)
+    {
+        base.OnNavigated(parameters);
+        if (RequestCloseOnNavigated)
+            RequestClose!(CloseResult);
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        ClosingCount++;
+        if (ClosingCount == 1)
+            e.Cancel = true;
+
+        base.OnClosing(e);
+    }
 }
 
 public sealed class AwareViewModel : INavigationAware

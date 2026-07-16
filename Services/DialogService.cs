@@ -85,34 +85,80 @@ namespace SimpleNavigation.Services
         private void ShowCore(Window window, DialogParameters? parameters)
         {
             window.Dispatcher.VerifyAccess();
-            ConfigureNonModalAwareness(window, parameters);
+            var priorSubscription = RemoveNonModalSubscription(window);
+            var subscription = CreateNonModalSubscription(window);
 
-            if (!window.IsVisible)
-                window.Show();
+            try
+            {
+                AttachNonModalSubscription(window, subscription);
+                NotifyAwareTargets(subscription.AwareTargets, parameters);
 
-            window.Activate();
+                if (!IsCurrentWindow(window))
+                    return;
+
+                if (!window.IsVisible)
+                    window.Show();
+
+                window.Activate();
+            }
+            catch
+            {
+                RemoveNonModalSubscription(window, subscription);
+                if (priorSubscription != null && IsCurrentWindow(window))
+                    AttachNonModalSubscription(window, priorSubscription);
+
+                throw;
+            }
         }
 
         private DialogParameters? ShowDialogCore(Window window, DialogParameters? parameters)
         {
             window.Dispatcher.VerifyAccess();
-            RemoveNonModalSubscription(window);
+            if (window.IsVisible)
+            {
+                throw new InvalidOperationException(
+                    "ShowDialog cannot be called for a visible window.");
+            }
+
+            var priorSubscription = RemoveNonModalSubscription(window);
 
             DialogParameters? result = null;
             var awareTargets = GetAwareTargets(window);
             Action<DialogParameters?> requestClose = closeResult =>
             {
                 window.Dispatcher.VerifyAccess();
-                result = closeResult;
-                window.Close();
+                EventHandler? closedHandler = null;
+                closedHandler = (_, _) => result = closeResult;
+                window.Closed += closedHandler;
+
+                try
+                {
+                    window.Close();
+                }
+                finally
+                {
+                    window.Closed -= closedHandler;
+                }
             };
 
             try
             {
                 SetRequestClose(awareTargets, requestClose);
                 NotifyAwareTargets(awareTargets, parameters);
+
+                if (!IsCurrentWindow(window))
+                    return result;
+
                 window.ShowDialog();
                 return result;
+            }
+            catch
+            {
+                ClearRequestClose(awareTargets, requestClose);
+                if (priorSubscription != null && IsCurrentWindow(window))
+                    AttachNonModalSubscription(window, priorSubscription);
+
+                throw;
             }
             finally
             {
@@ -141,10 +187,8 @@ namespace SimpleNavigation.Services
             }
         }
 
-        private void ConfigureNonModalAwareness(Window window, DialogParameters? parameters)
+        private NonModalSubscription CreateNonModalSubscription(Window window)
         {
-            RemoveNonModalSubscription(window);
-
             var awareTargets = GetAwareTargets(window);
             Action<DialogParameters?> requestClose = _ =>
             {
@@ -158,30 +202,35 @@ namespace SimpleNavigation.Services
                     RemoveNonModalSubscription(window, subscription);
             };
             subscription = new NonModalSubscription(awareTargets, requestClose, closedHandler);
+            return subscription;
+        }
 
-            SetRequestClose(awareTargets, requestClose);
-            window.Closed += closedHandler;
+        private void AttachNonModalSubscription(
+            Window window,
+            NonModalSubscription subscription)
+        {
+            SetRequestClose(subscription.AwareTargets, subscription.RequestClose);
+            window.Closed += subscription.ClosedHandler;
             lock (subscriptionSyncRoot)
             {
                 nonModalSubscriptions[window] = subscription;
             }
-
-            NotifyAwareTargets(awareTargets, parameters);
         }
 
-        private void RemoveNonModalSubscription(Window window)
+        private NonModalSubscription? RemoveNonModalSubscription(Window window)
         {
             NonModalSubscription? subscription;
             lock (subscriptionSyncRoot)
             {
                 if (!nonModalSubscriptions.TryGetValue(window, out subscription))
-                    return;
+                    return null;
 
                 nonModalSubscriptions.Remove(window);
             }
 
             window.Closed -= subscription.ClosedHandler;
             ClearRequestClose(subscription.AwareTargets, subscription.RequestClose);
+            return subscription;
         }
 
         private void RemoveNonModalSubscription(
@@ -201,6 +250,13 @@ namespace SimpleNavigation.Services
 
             window.Closed -= expectedSubscription.ClosedHandler;
             ClearRequestClose(expectedSubscription.AwareTargets, expectedSubscription.RequestClose);
+        }
+
+        private bool IsCurrentWindow(Window window)
+        {
+            return ReferenceEquals(
+                dialogManager.GetExistingWindow(window.GetType()),
+                window);
         }
 
         private static IDialogAware[] GetAwareTargets(Window window)

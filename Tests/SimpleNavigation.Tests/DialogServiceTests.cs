@@ -1,10 +1,13 @@
+using System.Reflection;
 using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleNavigation.Common;
 using SimpleNavigation.Extensions;
+using SimpleNavigation.Interface.Managers;
 using SimpleNavigation.Interface.Services;
+using SimpleNavigation.Services;
 using SimpleNavigation.Tests.TestInfrastructure;
 
 namespace SimpleNavigation.Tests;
@@ -149,7 +152,7 @@ public sealed class DialogServiceTests
     }
 
     [Fact]
-    public void Show_AwarenessExceptionPropagatesAndWindowCanBeCleanedUp()
+    public void Show_AwarenessExceptionRollsBackNewSubscriptionImmediately()
     {
         StaTest.Run(() =>
         {
@@ -162,6 +165,87 @@ public sealed class DialogServiceTests
 
             Assert.Equal("dialog awareness failed", exception.Message);
             Assert.False(window.IsVisible);
+            Assert.Null(window.RequestClose);
+            Assert.Null(viewModel.RequestClose);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+        });
+    }
+
+    [Fact]
+    public void Show_AwarenessFailureRestoresPriorLiveSubscription()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new ToggleThrowAwareDialogViewModel();
+            var window = new AwareWindow { DataContext = viewModel };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            var service = provider.GetRequiredService<IDialogService>();
+            service.Show<AwareWindow>();
+            var windowCallback = window.RequestClose;
+            var viewModelCallback = viewModel.RequestClose;
+            viewModel.ThrowOnNavigated = true;
+
+            Assert.Throws<InvalidOperationException>(() => service.Show<AwareWindow>());
+
+            Assert.Same(windowCallback, window.RequestClose);
+            Assert.Same(viewModelCallback, viewModel.RequestClose);
+            Assert.Equal(1, GetNonModalSubscriptionCount(provider));
+            windowCallback!(null);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+        });
+    }
+
+    [Fact]
+    public void Show_PresentationFailureRollsBackNewSubscriptionImmediately()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new AwareDialogViewModel();
+            var window = new ThrowingPresentationWindow { DataContext = viewModel };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                provider.GetRequiredService<IDialogService>().Show<ThrowingPresentationWindow>());
+
+            Assert.Equal("window presentation failed", exception.Message);
+            Assert.Null(window.RequestClose);
+            Assert.Null(viewModel.RequestClose);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+        });
+    }
+
+    [Fact]
+    public void Show_SynchronousRequestCloseReturnsWithoutPresentingClosedWindow()
+    {
+        StaTest.Run(() =>
+        {
+            var window = new SynchronousCloseAwareWindow();
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+
+            provider.GetRequiredService<IDialogService>().Show<SynchronousCloseAwareWindow>();
+
+            Assert.False(window.IsVisible);
+            Assert.Null(provider.GetRequiredService<IDialogManager>()
+                .GetExistingWindow(typeof(SynchronousCloseAwareWindow)));
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+        });
+    }
+
+    [Fact]
+    public void Show_SynchronousCancelledRequestCloseContinuesPresentation()
+    {
+        StaTest.Run(() =>
+        {
+            var window = new CancelFirstCloseAwareWindow
+            {
+                RequestCloseOnNavigated = true,
+            };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+
+            provider.GetRequiredService<IDialogService>().Show<CancelFirstCloseAwareWindow>();
+
+            Assert.True(window.IsVisible);
+            Assert.Equal(1, window.ClosingCount);
             window.Close();
         });
     }
@@ -258,7 +342,7 @@ public sealed class DialogServiceTests
     }
 
     [Fact]
-    public void ShowDialog_WpfPresentationExceptionStillCleansBothCallbacks()
+    public void ShowDialog_VisibleNonModalWindowFailsBeforeReplacingCallbacks()
     {
         StaTest.Run(() =>
         {
@@ -267,13 +351,89 @@ public sealed class DialogServiceTests
             using var provider = BuildProvider(services => services.AddSingleton(window));
             var service = provider.GetRequiredService<IDialogService>();
             service.Show<AwareWindow>();
+            var windowCallback = window.RequestClose;
+            var viewModelCallback = viewModel.RequestClose;
 
-            Assert.Throws<InvalidOperationException>(() =>
+            var exception = Assert.Throws<InvalidOperationException>(() =>
                 service.ShowDialog<AwareWindow>());
 
-            Assert.Null(window.RequestClose);
-            Assert.Null(viewModel.RequestClose);
-            window.Close();
+            Assert.Contains("visible", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Same(windowCallback, window.RequestClose);
+            Assert.Same(viewModelCallback, viewModel.RequestClose);
+            windowCallback!(null);
+            Assert.False(window.IsVisible);
+        });
+    }
+
+    [Fact]
+    public void ShowDialog_SynchronousRequestCloseReturnsCommittedResultWithoutPresentation()
+    {
+        StaTest.Run(() =>
+        {
+            var result = new DialogParameters("result", 42);
+            var window = new SynchronousCloseAwareWindow { CloseResult = result };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+
+            var actual = provider.GetRequiredService<IDialogService>()
+                .ShowDialog<SynchronousCloseAwareWindow>();
+
+            Assert.Same(result, actual);
+            Assert.False(window.IsVisible);
+            Assert.Null(provider.GetRequiredService<IDialogManager>()
+                .GetExistingWindow(typeof(SynchronousCloseAwareWindow)));
+        });
+    }
+
+    [Fact]
+    public void ShowDialog_CancelledRequestCloseDoesNotCommitResultAndDirectCloseReturnsNull()
+    {
+        StaTest.Run(() =>
+        {
+            var candidate = new DialogParameters("candidate", 1);
+            CancelFirstCloseAwareWindow? window = null;
+            using var provider = BuildProvider(services =>
+                services.AddTransient<CancelFirstCloseAwareWindow>(_ =>
+                {
+                    window = new CancelFirstCloseAwareWindow { CloseResult = candidate };
+                    window.Dispatcher.BeginInvoke(
+                        DispatcherPriority.Normal,
+                        new Action(() => window.RequestClose!(candidate)));
+                    window.Dispatcher.BeginInvoke(
+                        DispatcherPriority.Background,
+                        new Action(window.Close));
+                    return window;
+                }));
+
+            var actual = provider.GetRequiredService<IDialogService>()
+                .ShowDialog<CancelFirstCloseAwareWindow>();
+
+            Assert.Null(actual);
+            Assert.NotNull(window);
+            Assert.Equal(2, window!.ClosingCount);
+        });
+    }
+
+    [Fact]
+    public void ShowDialog_SynchronousCancelledRequestCloseContinuesModalPresentation()
+    {
+        StaTest.Run(() =>
+        {
+            var candidate = new DialogParameters("candidate", 1);
+            var window = new CancelFirstCloseAwareWindow
+            {
+                RequestCloseOnNavigated = true,
+                CloseResult = candidate,
+            };
+            window.Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(window.Close));
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+
+            var actual = provider.GetRequiredService<IDialogService>()
+                .ShowDialog<CancelFirstCloseAwareWindow>();
+
+            Assert.Null(actual);
+            Assert.Equal(2, window.ClosingCount);
         });
     }
 
@@ -414,6 +574,47 @@ public sealed class DialogServiceTests
     }
 
     [Fact]
+    public void ShowAndShowDialog_RequireOwningWindowDispatcherThread()
+    {
+        StaTest.Run(() =>
+        {
+            var window = new FirstWindow();
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            provider.GetRequiredService<IDialogManager>()
+                .GetOrCreateWindow(typeof(FirstWindow));
+            var service = provider.GetRequiredService<IDialogService>();
+            Exception? showFailure = null;
+            Exception? modalFailure = null;
+            var worker = new Thread(() =>
+            {
+                try
+                {
+                    service.Show<FirstWindow>();
+                }
+                catch (Exception exception)
+                {
+                    showFailure = exception;
+                }
+
+                try
+                {
+                    service.ShowDialog<FirstWindow>();
+                }
+                catch (Exception exception)
+                {
+                    modalFailure = exception;
+                }
+            });
+            worker.Start();
+            Assert.True(worker.Join(TimeSpan.FromSeconds(5)));
+
+            Assert.IsType<InvalidOperationException>(showFailure);
+            Assert.IsType<InvalidOperationException>(modalFailure);
+            window.Close();
+        });
+    }
+
+    [Fact]
     public void InvalidTargetsAndKeysFailFastAndMissingDiExceptionIsPreserved()
     {
         using var provider = BuildProvider();
@@ -446,5 +647,18 @@ public sealed class DialogServiceTests
         services.RegisterNavigationService();
         configure?.Invoke(services);
         return services.BuildServiceProvider();
+    }
+
+    private static int GetNonModalSubscriptionCount(IServiceProvider provider)
+    {
+        var service = Assert.IsType<DialogService>(
+            provider.GetRequiredService<IDialogService>());
+        var field = typeof(DialogService).GetField(
+            "nonModalSubscriptions",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        var subscriptions = Assert.IsAssignableFrom<System.Collections.IDictionary>(
+            field!.GetValue(service));
+        return subscriptions.Count;
     }
 }
