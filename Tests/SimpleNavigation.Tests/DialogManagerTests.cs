@@ -437,6 +437,16 @@ public sealed class DialogManagerTests
         });
     }
 
+    [Fact]
+    public void JoinIfStarted_UnstartedBackgroundThread_DoesNothing()
+    {
+        var thread = CreateStaThread(() => { });
+
+        JoinIfStarted(thread);
+
+        Assert.True((thread.ThreadState & ThreadState.Unstarted) != 0);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static WeakReference CreateAndCloseManager(ManagedWindow window)
     {
@@ -485,7 +495,7 @@ public sealed class DialogManagerTests
 
     private static void JoinIfStarted(Thread thread)
     {
-        if (thread.ThreadState != ThreadState.Unstarted)
+        if ((thread.ThreadState & ThreadState.Unstarted) == 0)
         {
             Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "An STA worker did not finish.");
         }
