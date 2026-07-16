@@ -9,6 +9,7 @@ namespace SimpleNavigation.Common.Managers
         private readonly IServiceProvider provider;
         private readonly object syncRoot = new();
         private readonly Dictionary<Type, WeakReference<Window>> dialogWindows = new();
+        private readonly HashSet<Type> resolvingTypes = new();
 
         public DialogManager(IServiceProvider provider)
         {
@@ -19,23 +20,16 @@ namespace SimpleNavigation.Common.Managers
         {
             if (sender is not Window closedWindow) return;
 
+            closedWindow.Closed -= OnWindowClosed;
+
             lock (syncRoot)
             {
-                Type? matchingType = null;
-
-                foreach (var dialogWindow in dialogWindows)
+                var windowType = closedWindow.GetType();
+                if (dialogWindows.TryGetValue(windowType, out var weakWindow)
+                    && weakWindow.TryGetTarget(out var cachedWindow)
+                    && ReferenceEquals(cachedWindow, closedWindow))
                 {
-                    if (dialogWindow.Value.TryGetTarget(out var cachedWindow)
-                        && ReferenceEquals(cachedWindow, closedWindow))
-                    {
-                        matchingType = dialogWindow.Key;
-                        break;
-                    }
-                }
-
-                if (matchingType != null)
-                {
-                    dialogWindows.Remove(matchingType);
+                    dialogWindows.Remove(windowType);
                 }
             }
         }
@@ -44,37 +38,46 @@ namespace SimpleNavigation.Common.Managers
         {
             ValidateWindowType(windowType);
 
-            var existingWindow = GetExistingWindowCore(windowType);
-            if (existingWindow != null)
-            {
-                return existingWindow;
-            }
-
-            var service = provider.GetRequiredService(windowType);
-            if (service is not Window newWindow)
-            {
-                throw new InvalidOperationException(
-                    $"The service registered for window type '{windowType.FullName}' resolved to " +
-                    $"'{service.GetType().FullName}', which is not a '{typeof(Window).FullName}'.");
-            }
-
             lock (syncRoot)
             {
-                if (dialogWindows.TryGetValue(windowType, out var weakWindow))
+                var existingWindow = GetExistingWindowLocked(windowType);
+                if (existingWindow != null)
                 {
-                    if (weakWindow.TryGetTarget(out existingWindow))
-                    {
-                        return existingWindow;
-                    }
-
-                    dialogWindows.Remove(windowType);
+                    return existingWindow;
                 }
 
-                dialogWindows[windowType] = new WeakReference<Window>(newWindow);
-            }
+                if (!resolvingTypes.Add(windowType))
+                {
+                    throw new InvalidOperationException(
+                        $"Window type '{windowType.FullName}' is already being resolved by this dialog manager.");
+                }
 
-            newWindow.Closed += OnWindowClosed;
-            return newWindow;
+                try
+                {
+                    var service = provider.GetRequiredService(windowType);
+                    if (service is not Window newWindow)
+                    {
+                        throw new InvalidOperationException(
+                            $"The service registered for window type '{windowType.FullName}' resolved to " +
+                            $"'{service.GetType().FullName}', which is not a '{typeof(Window).FullName}'.");
+                    }
+
+                    if (newWindow.GetType() != windowType)
+                    {
+                        throw new InvalidOperationException(
+                            $"The service registered for window type '{windowType.FullName}' resolved to " +
+                            $"the different window type '{newWindow.GetType().FullName}'.");
+                    }
+
+                    newWindow.Closed += OnWindowClosed;
+                    dialogWindows[windowType] = new WeakReference<Window>(newWindow);
+                    return newWindow;
+                }
+                finally
+                {
+                    resolvingTypes.Remove(windowType);
+                }
+            }
         }
 
         public Window? GetExistingWindow(Type windowType)
@@ -92,19 +95,24 @@ namespace SimpleNavigation.Common.Managers
         {
             lock (syncRoot)
             {
-                if (!dialogWindows.TryGetValue(windowType, out var weakWindow))
-                {
-                    return null;
-                }
+                return GetExistingWindowLocked(windowType);
+            }
+        }
 
-                if (weakWindow.TryGetTarget(out var window))
-                {
-                    return window;
-                }
-
-                dialogWindows.Remove(windowType);
+        private Window? GetExistingWindowLocked(Type windowType)
+        {
+            if (!dialogWindows.TryGetValue(windowType, out var weakWindow))
+            {
                 return null;
             }
+
+            if (weakWindow.TryGetTarget(out var window))
+            {
+                return window;
+            }
+
+            dialogWindows.Remove(windowType);
+            return null;
         }
 
         private static void ValidateWindowType(Type windowType)
