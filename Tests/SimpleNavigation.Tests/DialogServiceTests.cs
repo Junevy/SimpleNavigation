@@ -407,6 +407,56 @@ public sealed class DialogServiceTests
     }
 
     [Fact]
+    public void Show_PriorCleanupSetterSynchronousCloseDoesNotAttachToClosedWindow()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new CleanupActionAwareViewModel();
+            var window = new AwareWindow { DataContext = viewModel };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            var service = provider.GetRequiredService<IDialogService>();
+            service.Show<AwareWindow>();
+            viewModel.CleanupAction = window.Close;
+
+            service.Show<AwareWindow>();
+
+            Assert.Null(provider.GetRequiredService<IDialogManager>()
+                .GetExistingWindow(typeof(AwareWindow)));
+            Assert.Null(window.RequestClose);
+            Assert.Null(viewModel.RequestClose);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+        });
+    }
+
+    [Fact]
+    public void Show_PriorCleanupSetterReentrantShowPreservesReentrantSubscription()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new CleanupActionAwareViewModel();
+            var window = new AwareWindow { DataContext = viewModel };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            var service = provider.GetRequiredService<IDialogService>();
+            service.Show<AwareWindow>();
+            Action<DialogParameters?>? reentrantCallback = null;
+            viewModel.CleanupAction = () =>
+            {
+                service.Show<AwareWindow>();
+                reentrantCallback = window.RequestClose;
+            };
+
+            service.Show<AwareWindow>();
+
+            Assert.NotNull(reentrantCallback);
+            Assert.Same(reentrantCallback, window.RequestClose);
+            Assert.Same(reentrantCallback, viewModel.RequestClose);
+            Assert.Equal(1, GetNonModalSubscriptionCount(provider));
+            reentrantCallback!(null);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+        });
+    }
+
+    [Fact]
     public void Show_ReentrantSuccessfulReplacementSurvivesOuterRollback()
     {
         StaTest.Run(() =>

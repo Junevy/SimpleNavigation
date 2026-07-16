@@ -225,6 +225,31 @@ public sealed class ThrowingClearAwareWindow : Window, IDialogAware
     }
 }
 
+public sealed class CleanupActionAwareViewModel : IDialogAware
+{
+    private Action<DialogParameters?>? requestClose;
+
+    public Action? CleanupAction { get; set; }
+
+    public Action<DialogParameters?>? RequestClose
+    {
+        get => requestClose;
+        set
+        {
+            var cleanupAction = value == null && requestClose != null
+                ? CleanupAction
+                : null;
+            CleanupAction = null;
+            requestClose = value;
+            cleanupAction?.Invoke();
+        }
+    }
+
+    public void OnNavigated(DialogParameters? parameters)
+    {
+    }
+}
+
 public sealed class ReplacingAwareDialogViewModel : AwareDialogViewModel
 {
     public Action<DialogParameters?> Replacement { get; } = _ => { };

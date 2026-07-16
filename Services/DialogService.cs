@@ -98,6 +98,9 @@ namespace SimpleNavigation.Services
             }
 
             var priorSubscription = RemoveNonModalSubscription(window);
+            if (!IsCurrentWindow(window) || HasNonModalSubscription(window))
+                return;
+
             var subscription = CreateNonModalSubscription(window);
 
             try
@@ -162,6 +165,8 @@ namespace SimpleNavigation.Services
             DialogParameters? parameters)
         {
             var priorSubscription = RemoveNonModalSubscription(window);
+            if (!IsCurrentWindow(window) || HasNonModalSubscription(window))
+                return null;
 
             DialogParameters? result = null;
             var awareTargets = GetAwareTargets(window);
@@ -263,6 +268,9 @@ namespace SimpleNavigation.Services
         {
             lock (subscriptionSyncRoot)
             {
+                if (nonModalSubscriptions.ContainsKey(window))
+                    return false;
+
                 nonModalSubscriptions.Add(window, subscription);
             }
 
@@ -365,6 +373,14 @@ namespace SimpleNavigation.Services
             {
                 return nonModalSubscriptions.TryGetValue(window, out var currentSubscription)
                     && ReferenceEquals(currentSubscription, expectedSubscription);
+            }
+        }
+
+        private bool HasNonModalSubscription(Window window)
+        {
+            lock (subscriptionSyncRoot)
+            {
+                return nonModalSubscriptions.ContainsKey(window);
             }
         }
 
