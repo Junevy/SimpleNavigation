@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
@@ -313,8 +314,95 @@ public sealed class DialogServiceTests
                 .GetProperty("Comparer")!
                 .GetValue(subscriptions);
 
-            Assert.NotNull(comparer);
-            Assert.NotSame(EqualityComparer<Window>.Default, comparer);
+            var referenceComparer = Assert.IsAssignableFrom<IEqualityComparer<Window>>(comparer);
+            var first = new Window();
+            var second = new Window();
+            Assert.Equal("WindowReferenceComparer", comparer!.GetType().Name);
+            Assert.True(referenceComparer.Equals(first, first));
+            Assert.False(referenceComparer.Equals(first, second));
+            Assert.Equal(RuntimeHelpers.GetHashCode(first), referenceComparer.GetHashCode(first));
+            first.Close();
+            second.Close();
+        });
+    }
+
+    [Fact]
+    public void Show_RequestCloseSetterSynchronousCloseStopsRemainingCallbackInstallation()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new AwareDialogViewModel();
+            var window = new ClosingRequestCloseAwareWindow
+            {
+                CloseOnNonNullSet = true,
+                DataContext = viewModel,
+            };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+
+            provider.GetRequiredService<IDialogService>()
+                .Show<ClosingRequestCloseAwareWindow>();
+
+            Assert.Null(window.RequestClose);
+            Assert.Null(viewModel.RequestClose);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+            Assert.Null(provider.GetRequiredService<IDialogManager>()
+                .GetExistingWindow(typeof(ClosingRequestCloseAwareWindow)));
+        });
+    }
+
+    [Fact]
+    public void Show_NormalClosedCleanupContinuesAndPropagatesFirstCallbackException()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new AwareDialogViewModel();
+            var window = new ThrowingClearAwareWindow { DataContext = viewModel };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            provider.GetRequiredService<IDialogService>()
+                .Show<ThrowingClearAwareWindow>();
+            window.ThrowOnNullSet = true;
+            var closedHandler = GetNonModalClosedHandler(provider, window);
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                closedHandler(window, EventArgs.Empty));
+
+            Assert.Equal("request close cleanup failed", exception.Message);
+            Assert.NotNull(window.RequestClose);
+            Assert.Null(viewModel.RequestClose);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+            window.ThrowOnNullSet = false;
+            window.RequestClose = null;
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void ShowDialog_NormalFinallyCleanupContinuesAndPropagatesFirstCallbackException()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new AwareDialogViewModel();
+            var window = new ThrowingClearAwareWindow
+            {
+                DataContext = viewModel,
+                ThrowOnNullSet = true,
+            };
+            window.Dispatcher.BeginInvoke(
+                DispatcherPriority.Normal,
+                new Action(window.Close));
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                provider.GetRequiredService<IDialogService>()
+                    .ShowDialog<ThrowingClearAwareWindow>());
+
+            Assert.Equal("request close cleanup failed", exception.Message);
+            Assert.NotNull(window.RequestClose);
+            Assert.Null(viewModel.RequestClose);
+            Assert.Null(provider.GetRequiredService<IDialogManager>()
+                .GetExistingWindow(typeof(ThrowingClearAwareWindow)));
+            window.ThrowOnNullSet = false;
+            window.RequestClose = null;
         });
     }
 
@@ -905,5 +993,24 @@ public sealed class DialogServiceTests
         var subscriptions = Assert.IsAssignableFrom<System.Collections.IDictionary>(
             field!.GetValue(service));
         return subscriptions.Count;
+    }
+
+    private static EventHandler GetNonModalClosedHandler(
+        IServiceProvider provider,
+        Window window)
+    {
+        var service = Assert.IsType<DialogService>(
+            provider.GetRequiredService<IDialogService>());
+        var field = typeof(DialogService).GetField(
+            "nonModalSubscriptions",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        var subscriptions = Assert.IsAssignableFrom<System.Collections.IDictionary>(
+            field!.GetValue(service));
+        var subscription = subscriptions[window];
+        Assert.NotNull(subscription);
+        var property = subscription!.GetType().GetProperty("ClosedHandler");
+        Assert.NotNull(property);
+        return Assert.IsType<EventHandler>(property!.GetValue(subscription));
     }
 }

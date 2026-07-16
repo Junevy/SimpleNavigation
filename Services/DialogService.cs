@@ -3,6 +3,7 @@ using SimpleNavigation.Common;
 using SimpleNavigation.Interface.Awares;
 using SimpleNavigation.Interface.Managers;
 using SimpleNavigation.Interface.Services;
+using System.Runtime.ExceptionServices;
 using System.Runtime.CompilerServices;
 using System.Windows;
 
@@ -101,7 +102,9 @@ namespace SimpleNavigation.Services
 
             try
             {
-                AttachNonModalSubscription(window, subscription);
+                if (!AttachNonModalSubscription(window, subscription))
+                    return;
+
                 NotifyAwareTargets(subscription.AwareTargets, parameters);
 
                 if (!IsCurrentWindow(window))
@@ -115,7 +118,10 @@ namespace SimpleNavigation.Services
             catch
             {
                 var removedSubscription =
-                    RemoveNonModalSubscription(window, subscription);
+                    RemoveNonModalSubscription(
+                        window,
+                        subscription,
+                        suppressCallbackExceptions: true);
                 if (removedSubscription
                     && priorSubscription != null
                     && IsCurrentWindow(window))
@@ -176,6 +182,7 @@ namespace SimpleNavigation.Services
                 }
             };
 
+            var operationFailed = false;
             try
             {
                 SetRequestClose(awareTargets, requestClose);
@@ -189,7 +196,11 @@ namespace SimpleNavigation.Services
             }
             catch
             {
-                ClearRequestClose(awareTargets, requestClose);
+                operationFailed = true;
+                ClearRequestClose(
+                    awareTargets,
+                    requestClose,
+                    suppressExceptions: true);
                 if (priorSubscription != null && IsCurrentWindow(window))
                 {
                     TryRestoreNonModalSubscription(
@@ -202,7 +213,8 @@ namespace SimpleNavigation.Services
             }
             finally
             {
-                ClearRequestClose(awareTargets, requestClose);
+                if (!operationFailed)
+                    ClearRequestClose(awareTargets, requestClose);
             }
         }
 
@@ -245,7 +257,7 @@ namespace SimpleNavigation.Services
             return subscription;
         }
 
-        private void AttachNonModalSubscription(
+        private bool AttachNonModalSubscription(
             Window window,
             NonModalSubscription subscription)
         {
@@ -255,7 +267,7 @@ namespace SimpleNavigation.Services
             }
 
             window.Closed += subscription.ClosedHandler;
-            SetRequestClose(subscription.AwareTargets, subscription.RequestClose);
+            return SetRequestClose(window, subscription);
         }
 
         private bool TryRestoreNonModalSubscription(
@@ -274,20 +286,35 @@ namespace SimpleNavigation.Services
             try
             {
                 window.Closed += subscription.ClosedHandler;
-                RestoreRequestClose(
+                if (!RestoreRequestClose(
+                    window,
+                    subscription,
                     subscription.AwareTargets,
                     subscription.RequestClose,
-                    failedRequestClose);
+                    failedRequestClose))
+                {
+                    RemoveNonModalSubscription(
+                        window,
+                        subscription,
+                        suppressCallbackExceptions: true);
+                    return false;
+                }
+
                 return true;
             }
             catch
             {
-                RemoveNonModalSubscription(window, subscription);
+                RemoveNonModalSubscription(
+                    window,
+                    subscription,
+                    suppressCallbackExceptions: true);
                 return false;
             }
         }
 
-        private NonModalSubscription? RemoveNonModalSubscription(Window window)
+        private NonModalSubscription? RemoveNonModalSubscription(
+            Window window,
+            bool suppressCallbackExceptions = false)
         {
             NonModalSubscription? subscription;
             lock (subscriptionSyncRoot)
@@ -299,13 +326,17 @@ namespace SimpleNavigation.Services
             }
 
             window.Closed -= subscription.ClosedHandler;
-            ClearRequestClose(subscription.AwareTargets, subscription.RequestClose);
+            ClearRequestClose(
+                subscription.AwareTargets,
+                subscription.RequestClose,
+                suppressCallbackExceptions);
             return subscription;
         }
 
         private bool RemoveNonModalSubscription(
             Window window,
-            NonModalSubscription expectedSubscription)
+            NonModalSubscription expectedSubscription,
+            bool suppressCallbackExceptions = false)
         {
             lock (subscriptionSyncRoot)
             {
@@ -319,8 +350,22 @@ namespace SimpleNavigation.Services
             }
 
             window.Closed -= expectedSubscription.ClosedHandler;
-            ClearRequestClose(expectedSubscription.AwareTargets, expectedSubscription.RequestClose);
+            ClearRequestClose(
+                expectedSubscription.AwareTargets,
+                expectedSubscription.RequestClose,
+                suppressCallbackExceptions);
             return true;
+        }
+
+        private bool IsExpectedNonModalSubscription(
+            Window window,
+            NonModalSubscription expectedSubscription)
+        {
+            lock (subscriptionSyncRoot)
+            {
+                return nonModalSubscriptions.TryGetValue(window, out var currentSubscription)
+                    && ReferenceEquals(currentSubscription, expectedSubscription);
+            }
         }
 
         private bool IsModalActive(Window window)
@@ -380,6 +425,25 @@ namespace SimpleNavigation.Services
                 aware.RequestClose = requestClose;
         }
 
+        private bool SetRequestClose(
+            Window window,
+            NonModalSubscription subscription)
+        {
+            foreach (var aware in subscription.AwareTargets)
+            {
+                aware.RequestClose = subscription.RequestClose;
+                if (!IsExpectedNonModalSubscription(window, subscription))
+                {
+                    ClearRequestClose(
+                        subscription.AwareTargets,
+                        subscription.RequestClose);
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static void NotifyAwareTargets(
             IEnumerable<IDialogAware> awareTargets,
             DialogParameters? parameters)
@@ -388,7 +452,9 @@ namespace SimpleNavigation.Services
                 aware.OnNavigated(parameters);
         }
 
-        private static void RestoreRequestClose(
+        private bool RestoreRequestClose(
+            Window window,
+            NonModalSubscription subscription,
             IEnumerable<IDialogAware> awareTargets,
             Action<DialogParameters?> requestClose,
             Action<DialogParameters?> failedRequestClose)
@@ -396,18 +462,27 @@ namespace SimpleNavigation.Services
             foreach (var aware in awareTargets)
             {
                 var currentRequestClose = aware.RequestClose;
+                if (!IsExpectedNonModalSubscription(window, subscription))
+                    return false;
+
                 if (currentRequestClose == null
                     || ReferenceEquals(currentRequestClose, failedRequestClose))
                 {
                     aware.RequestClose = requestClose;
+                    if (!IsExpectedNonModalSubscription(window, subscription))
+                        return false;
                 }
             }
+
+            return true;
         }
 
         private static void ClearRequestClose(
             IEnumerable<IDialogAware> awareTargets,
-            Action<DialogParameters?> requestClose)
+            Action<DialogParameters?> requestClose,
+            bool suppressExceptions = false)
         {
+            ExceptionDispatchInfo? cleanupException = null;
             foreach (var aware in awareTargets)
             {
                 try
@@ -415,11 +490,14 @@ namespace SimpleNavigation.Services
                     if (ReferenceEquals(aware.RequestClose, requestClose))
                         aware.RequestClose = null;
                 }
-                catch
+                catch (Exception exception)
                 {
-                    // Cleanup must not replace the exception from the dialog operation.
+                    cleanupException ??= ExceptionDispatchInfo.Capture(exception);
                 }
             }
+
+            if (!suppressExceptions)
+                cleanupException?.Throw();
         }
 
         private static void ValidateWindowType(Type targetType)

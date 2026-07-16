@@ -180,6 +180,51 @@ public sealed class ThrowingRequestCloseAwareViewModel : IDialogAware
     }
 }
 
+public sealed class ClosingRequestCloseAwareWindow : Window, IDialogAware
+{
+    private Action<DialogParameters?>? requestClose;
+
+    public bool CloseOnNonNullSet { get; set; }
+
+    public Action<DialogParameters?>? RequestClose
+    {
+        get => requestClose;
+        set
+        {
+            requestClose = value;
+            if (value != null && CloseOnNonNullSet)
+                Close();
+        }
+    }
+
+    public void OnNavigated(DialogParameters? parameters)
+    {
+    }
+}
+
+public sealed class ThrowingClearAwareWindow : Window, IDialogAware
+{
+    private Action<DialogParameters?>? requestClose;
+
+    public bool ThrowOnNullSet { get; set; }
+
+    public Action<DialogParameters?>? RequestClose
+    {
+        get => requestClose;
+        set
+        {
+            if (value == null && ThrowOnNullSet)
+                throw new InvalidOperationException("request close cleanup failed");
+
+            requestClose = value;
+        }
+    }
+
+    public void OnNavigated(DialogParameters? parameters)
+    {
+    }
+}
+
 public sealed class ReplacingAwareDialogViewModel : AwareDialogViewModel
 {
     public Action<DialogParameters?> Replacement { get; } = _ => { };
