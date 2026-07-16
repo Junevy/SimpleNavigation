@@ -16,7 +16,8 @@ namespace SimpleNavigation.Services
         private readonly IDialogManager dialogManager;
         private readonly NavigationRouteRegistry routes;
         private readonly object subscriptionSyncRoot = new();
-        private readonly Dictionary<Window, NonModalSubscription> nonModalSubscriptions = new();
+        private readonly Dictionary<Window, NonModalSubscription> nonModalSubscriptions =
+            new(WindowReferenceComparer.Instance);
         private readonly object modalSyncRoot = new();
         private readonly HashSet<Window> activeModalWindows =
             new(WindowReferenceComparer.Instance);
@@ -119,7 +120,10 @@ namespace SimpleNavigation.Services
                     && priorSubscription != null
                     && IsCurrentWindow(window))
                 {
-                    TryAttachNonModalSubscription(window, priorSubscription);
+                    TryRestoreNonModalSubscription(
+                        window,
+                        priorSubscription,
+                        subscription.RequestClose);
                 }
 
                 throw;
@@ -187,7 +191,12 @@ namespace SimpleNavigation.Services
             {
                 ClearRequestClose(awareTargets, requestClose);
                 if (priorSubscription != null && IsCurrentWindow(window))
-                    TryAttachNonModalSubscription(window, priorSubscription);
+                {
+                    TryRestoreNonModalSubscription(
+                        window,
+                        priorSubscription,
+                        requestClose);
+                }
 
                 throw;
             }
@@ -240,27 +249,41 @@ namespace SimpleNavigation.Services
             Window window,
             NonModalSubscription subscription)
         {
-            SetRequestClose(subscription.AwareTargets, subscription.RequestClose);
-            window.Closed += subscription.ClosedHandler;
             lock (subscriptionSyncRoot)
             {
-                nonModalSubscriptions[window] = subscription;
+                nonModalSubscriptions.Add(window, subscription);
             }
+
+            window.Closed += subscription.ClosedHandler;
+            SetRequestClose(subscription.AwareTargets, subscription.RequestClose);
         }
 
-        private bool TryAttachNonModalSubscription(
+        private bool TryRestoreNonModalSubscription(
             Window window,
-            NonModalSubscription subscription)
+            NonModalSubscription subscription,
+            Action<DialogParameters?> failedRequestClose)
         {
             lock (subscriptionSyncRoot)
             {
                 if (nonModalSubscriptions.ContainsKey(window))
                     return false;
 
-                SetRequestClose(subscription.AwareTargets, subscription.RequestClose);
-                window.Closed += subscription.ClosedHandler;
                 nonModalSubscriptions.Add(window, subscription);
+            }
+
+            try
+            {
+                window.Closed += subscription.ClosedHandler;
+                RestoreRequestClose(
+                    subscription.AwareTargets,
+                    subscription.RequestClose,
+                    failedRequestClose);
                 return true;
+            }
+            catch
+            {
+                RemoveNonModalSubscription(window, subscription);
+                return false;
             }
         }
 
@@ -365,14 +388,37 @@ namespace SimpleNavigation.Services
                 aware.OnNavigated(parameters);
         }
 
+        private static void RestoreRequestClose(
+            IEnumerable<IDialogAware> awareTargets,
+            Action<DialogParameters?> requestClose,
+            Action<DialogParameters?> failedRequestClose)
+        {
+            foreach (var aware in awareTargets)
+            {
+                var currentRequestClose = aware.RequestClose;
+                if (currentRequestClose == null
+                    || ReferenceEquals(currentRequestClose, failedRequestClose))
+                {
+                    aware.RequestClose = requestClose;
+                }
+            }
+        }
+
         private static void ClearRequestClose(
             IEnumerable<IDialogAware> awareTargets,
             Action<DialogParameters?> requestClose)
         {
             foreach (var aware in awareTargets)
             {
-                if (ReferenceEquals(aware.RequestClose, requestClose))
-                    aware.RequestClose = null;
+                try
+                {
+                    if (ReferenceEquals(aware.RequestClose, requestClose))
+                        aware.RequestClose = null;
+                }
+                catch
+                {
+                    // Cleanup must not replace the exception from the dialog operation.
+                }
             }
         }
 

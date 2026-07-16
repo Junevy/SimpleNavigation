@@ -196,6 +196,129 @@ public sealed class DialogServiceTests
     }
 
     [Fact]
+    public void Show_RollbackRestoresPriorOnlyWithoutOverwritingApplicationCallback()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new ReplacingThrowingAwareDialogViewModel();
+            var window = new AwareWindow { DataContext = viewModel };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            var service = provider.GetRequiredService<IDialogService>();
+            service.Show<AwareWindow>();
+            var priorWindowCallback = window.RequestClose;
+            var priorViewModelCallback = viewModel.RequestClose;
+            viewModel.ReplaceAndThrow = true;
+
+            Assert.Throws<InvalidOperationException>(() => service.Show<AwareWindow>());
+
+            Assert.Same(priorWindowCallback, window.RequestClose);
+            Assert.NotSame(priorViewModelCallback, viewModel.RequestClose);
+            Assert.Same(viewModel.Replacement, viewModel.RequestClose);
+            Assert.Equal(1, GetNonModalSubscriptionCount(provider));
+            priorWindowCallback!(null);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+            Assert.Same(viewModel.Replacement, viewModel.RequestClose);
+        });
+    }
+
+    [Fact]
+    public void Show_ThrowingRequestCloseSetterRollsBackEarlierTargets()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new ThrowingRequestCloseAwareViewModel
+            {
+                ThrowOnEveryNonNullSet = true,
+            };
+            var window = new AwareWindow { DataContext = viewModel };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                provider.GetRequiredService<IDialogService>().Show<AwareWindow>());
+
+            Assert.Equal("request close setter failed", exception.Message);
+            Assert.Null(window.RequestClose);
+            Assert.Null(viewModel.RequestClose);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void Show_ThrowingRequestCloseSetterRestoresPriorSubscription()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new ThrowingRequestCloseAwareViewModel();
+            var window = new AwareWindow { DataContext = viewModel };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            var service = provider.GetRequiredService<IDialogService>();
+            service.Show<AwareWindow>();
+            var priorWindowCallback = window.RequestClose;
+            var priorViewModelCallback = viewModel.RequestClose;
+            window.Hide();
+            viewModel.ThrowOnNextNonNullSet = true;
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                service.Show<AwareWindow>());
+
+            Assert.Equal("request close setter failed", exception.Message);
+            Assert.Same(priorWindowCallback, window.RequestClose);
+            Assert.Same(priorViewModelCallback, viewModel.RequestClose);
+            Assert.Equal(1, GetNonModalSubscriptionCount(provider));
+            priorWindowCallback!(null);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+        });
+    }
+
+    [Fact]
+    public void Show_PriorRestoreSetterFailurePreservesOriginalExceptionAndCleansPartialRestore()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new ThrowingRequestCloseAwareViewModel();
+            var window = new AwareWindow { DataContext = viewModel };
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            var service = provider.GetRequiredService<IDialogService>();
+            service.Show<AwareWindow>();
+            window.Hide();
+            viewModel.ThrowOnNavigatedAndArmNextNonNullSet = true;
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                service.Show<AwareWindow>());
+
+            Assert.Equal("dialog awareness failed", exception.Message);
+            Assert.Null(window.RequestClose);
+            Assert.Null(viewModel.RequestClose);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void Show_NonModalSubscriptionsUseExplicitReferenceIdentityComparer()
+    {
+        StaTest.Run(() =>
+        {
+            using var provider = BuildProvider();
+            var service = Assert.IsType<DialogService>(
+                provider.GetRequiredService<IDialogService>());
+            var field = typeof(DialogService).GetField(
+                "nonModalSubscriptions",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(field);
+            var subscriptions = field!.GetValue(service);
+            Assert.NotNull(subscriptions);
+            var comparer = subscriptions!.GetType()
+                .GetProperty("Comparer")!
+                .GetValue(subscriptions);
+
+            Assert.NotNull(comparer);
+            Assert.NotSame(EqualityComparer<Window>.Default, comparer);
+        });
+    }
+
+    [Fact]
     public void Show_ReentrantSuccessfulReplacementSurvivesOuterRollback()
     {
         StaTest.Run(() =>

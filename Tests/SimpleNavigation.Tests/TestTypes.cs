@@ -128,6 +128,58 @@ public sealed class OneShotReentrantAwareWindow : AwareWindow
     }
 }
 
+public sealed class ReplacingThrowingAwareDialogViewModel : AwareDialogViewModel
+{
+    public bool ReplaceAndThrow { get; set; }
+
+    public Action<DialogParameters?> Replacement { get; } = _ => { };
+
+    public override void OnNavigated(DialogParameters? parameters)
+    {
+        base.OnNavigated(parameters);
+        if (!ReplaceAndThrow)
+            return;
+
+        RequestClose = Replacement;
+        throw new InvalidOperationException("dialog awareness failed");
+    }
+}
+
+public sealed class ThrowingRequestCloseAwareViewModel : IDialogAware
+{
+    private Action<DialogParameters?>? requestClose;
+
+    public bool ThrowOnEveryNonNullSet { get; set; }
+
+    public bool ThrowOnNextNonNullSet { get; set; }
+
+    public bool ThrowOnNavigatedAndArmNextNonNullSet { get; set; }
+
+    public Action<DialogParameters?>? RequestClose
+    {
+        get => requestClose;
+        set
+        {
+            if (value != null && (ThrowOnEveryNonNullSet || ThrowOnNextNonNullSet))
+            {
+                ThrowOnNextNonNullSet = false;
+                throw new InvalidOperationException("request close setter failed");
+            }
+
+            requestClose = value;
+        }
+    }
+
+    public void OnNavigated(DialogParameters? parameters)
+    {
+        if (!ThrowOnNavigatedAndArmNextNonNullSet)
+            return;
+
+        ThrowOnNextNonNullSet = true;
+        throw new InvalidOperationException("dialog awareness failed");
+    }
+}
+
 public sealed class ReplacingAwareDialogViewModel : AwareDialogViewModel
 {
     public Action<DialogParameters?> Replacement { get; } = _ => { };
