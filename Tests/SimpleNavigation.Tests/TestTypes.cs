@@ -115,6 +115,19 @@ public sealed class ToggleThrowAwareDialogViewModel : AwareDialogViewModel
     }
 }
 
+public sealed class OneShotReentrantAwareWindow : AwareWindow
+{
+    public Action? NavigatedAction { get; set; }
+
+    public override void OnNavigated(DialogParameters? parameters)
+    {
+        base.OnNavigated(parameters);
+        var action = NavigatedAction;
+        NavigatedAction = null;
+        action?.Invoke();
+    }
+}
+
 public sealed class ReplacingAwareDialogViewModel : AwareDialogViewModel
 {
     public Action<DialogParameters?> Replacement { get; } = _ => { };

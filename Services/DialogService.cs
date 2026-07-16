@@ -3,6 +3,7 @@ using SimpleNavigation.Common;
 using SimpleNavigation.Interface.Awares;
 using SimpleNavigation.Interface.Managers;
 using SimpleNavigation.Interface.Services;
+using System.Runtime.CompilerServices;
 using System.Windows;
 
 namespace SimpleNavigation.Services
@@ -16,6 +17,9 @@ namespace SimpleNavigation.Services
         private readonly NavigationRouteRegistry routes;
         private readonly object subscriptionSyncRoot = new();
         private readonly Dictionary<Window, NonModalSubscription> nonModalSubscriptions = new();
+        private readonly object modalSyncRoot = new();
+        private readonly HashSet<Window> activeModalWindows =
+            new(WindowReferenceComparer.Instance);
 
         public DialogService(IServiceProvider provider, IDialogManager dialogManager)
         {
@@ -85,6 +89,12 @@ namespace SimpleNavigation.Services
         private void ShowCore(Window window, DialogParameters? parameters)
         {
             window.Dispatcher.VerifyAccess();
+            if (IsModalActive(window))
+            {
+                throw new InvalidOperationException(
+                    "Show cannot replace an active modal presentation for the same window.");
+            }
+
             var priorSubscription = RemoveNonModalSubscription(window);
             var subscription = CreateNonModalSubscription(window);
 
@@ -103,9 +113,14 @@ namespace SimpleNavigation.Services
             }
             catch
             {
-                RemoveNonModalSubscription(window, subscription);
-                if (priorSubscription != null && IsCurrentWindow(window))
-                    AttachNonModalSubscription(window, priorSubscription);
+                var removedSubscription =
+                    RemoveNonModalSubscription(window, subscription);
+                if (removedSubscription
+                    && priorSubscription != null
+                    && IsCurrentWindow(window))
+                {
+                    TryAttachNonModalSubscription(window, priorSubscription);
+                }
 
                 throw;
             }
@@ -114,12 +129,28 @@ namespace SimpleNavigation.Services
         private DialogParameters? ShowDialogCore(Window window, DialogParameters? parameters)
         {
             window.Dispatcher.VerifyAccess();
-            if (window.IsVisible)
-            {
-                throw new InvalidOperationException(
-                    "ShowDialog cannot be called for a visible window.");
-            }
+            ClaimModalOwnership(window);
 
+            try
+            {
+                if (window.IsVisible)
+                {
+                    throw new InvalidOperationException(
+                        "ShowDialog cannot be called for a visible window.");
+                }
+
+                return ShowDialogTransaction(window, parameters);
+            }
+            finally
+            {
+                ReleaseModalOwnership(window);
+            }
+        }
+
+        private DialogParameters? ShowDialogTransaction(
+            Window window,
+            DialogParameters? parameters)
+        {
             var priorSubscription = RemoveNonModalSubscription(window);
 
             DialogParameters? result = null;
@@ -156,7 +187,7 @@ namespace SimpleNavigation.Services
             {
                 ClearRequestClose(awareTargets, requestClose);
                 if (priorSubscription != null && IsCurrentWindow(window))
-                    AttachNonModalSubscription(window, priorSubscription);
+                    TryAttachNonModalSubscription(window, priorSubscription);
 
                 throw;
             }
@@ -217,6 +248,22 @@ namespace SimpleNavigation.Services
             }
         }
 
+        private bool TryAttachNonModalSubscription(
+            Window window,
+            NonModalSubscription subscription)
+        {
+            lock (subscriptionSyncRoot)
+            {
+                if (nonModalSubscriptions.ContainsKey(window))
+                    return false;
+
+                SetRequestClose(subscription.AwareTargets, subscription.RequestClose);
+                window.Closed += subscription.ClosedHandler;
+                nonModalSubscriptions.Add(window, subscription);
+                return true;
+            }
+        }
+
         private NonModalSubscription? RemoveNonModalSubscription(Window window)
         {
             NonModalSubscription? subscription;
@@ -233,7 +280,7 @@ namespace SimpleNavigation.Services
             return subscription;
         }
 
-        private void RemoveNonModalSubscription(
+        private bool RemoveNonModalSubscription(
             Window window,
             NonModalSubscription expectedSubscription)
         {
@@ -242,7 +289,7 @@ namespace SimpleNavigation.Services
                 if (!nonModalSubscriptions.TryGetValue(window, out var currentSubscription)
                     || !ReferenceEquals(currentSubscription, expectedSubscription))
                 {
-                    return;
+                    return false;
                 }
 
                 nonModalSubscriptions.Remove(window);
@@ -250,6 +297,35 @@ namespace SimpleNavigation.Services
 
             window.Closed -= expectedSubscription.ClosedHandler;
             ClearRequestClose(expectedSubscription.AwareTargets, expectedSubscription.RequestClose);
+            return true;
+        }
+
+        private bool IsModalActive(Window window)
+        {
+            lock (modalSyncRoot)
+            {
+                return activeModalWindows.Contains(window);
+            }
+        }
+
+        private void ClaimModalOwnership(Window window)
+        {
+            lock (modalSyncRoot)
+            {
+                if (!activeModalWindows.Add(window))
+                {
+                    throw new InvalidOperationException(
+                        "A modal presentation is already active for this window.");
+                }
+            }
+        }
+
+        private void ReleaseModalOwnership(Window window)
+        {
+            lock (modalSyncRoot)
+            {
+                activeModalWindows.Remove(window);
+            }
         }
 
         private bool IsCurrentWindow(Window window)
@@ -330,6 +406,21 @@ namespace SimpleNavigation.Services
             public Action<DialogParameters?> RequestClose { get; }
 
             public EventHandler ClosedHandler { get; }
+        }
+
+        private sealed class WindowReferenceComparer : IEqualityComparer<Window>
+        {
+            public static WindowReferenceComparer Instance { get; } = new();
+
+            public bool Equals(Window? x, Window? y)
+            {
+                return ReferenceEquals(x, y);
+            }
+
+            public int GetHashCode(Window obj)
+            {
+                return RuntimeHelpers.GetHashCode(obj);
+            }
         }
     }
 }

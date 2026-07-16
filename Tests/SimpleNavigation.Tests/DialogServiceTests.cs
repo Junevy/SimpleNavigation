@@ -196,6 +196,40 @@ public sealed class DialogServiceTests
     }
 
     [Fact]
+    public void Show_ReentrantSuccessfulReplacementSurvivesOuterRollback()
+    {
+        StaTest.Run(() =>
+        {
+            var viewModel = new ThrowingAwareDialogViewModel();
+            var window = new OneShotReentrantAwareWindow();
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            var service = provider.GetRequiredService<IDialogService>();
+            service.Show<OneShotReentrantAwareWindow>();
+            window.Hide();
+
+            Action<DialogParameters?>? replacementCallback = null;
+            window.DataContext = viewModel;
+            window.NavigatedAction = () =>
+            {
+                window.DataContext = null;
+                service.Show<OneShotReentrantAwareWindow>();
+                replacementCallback = window.RequestClose;
+                window.DataContext = viewModel;
+            };
+
+            Assert.Throws<InvalidOperationException>(() =>
+                service.Show<OneShotReentrantAwareWindow>());
+
+            Assert.NotNull(replacementCallback);
+            Assert.Same(replacementCallback, window.RequestClose);
+            Assert.Null(viewModel.RequestClose);
+            Assert.Equal(1, GetNonModalSubscriptionCount(provider));
+            replacementCallback!(null);
+            Assert.Equal(0, GetNonModalSubscriptionCount(provider));
+        });
+    }
+
+    [Fact]
     public void Show_PresentationFailureRollsBackNewSubscriptionImmediately()
     {
         StaTest.Run(() =>
@@ -362,6 +396,94 @@ public sealed class DialogServiceTests
             Assert.Same(viewModelCallback, viewModel.RequestClose);
             windowCallback!(null);
             Assert.False(window.IsVisible);
+        });
+    }
+
+    [Fact]
+    public void ShowDialog_ReentrantShowFailsWithoutReplacingModalCallback()
+    {
+        StaTest.Run(() =>
+        {
+            var result = new DialogParameters("result", 42);
+            var window = new OneShotReentrantAwareWindow();
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            var service = provider.GetRequiredService<IDialogService>();
+            Exception? reentrantFailure = null;
+            var callbackWasPreserved = false;
+            window.NavigatedAction = () =>
+            {
+                var modalCallback = window.RequestClose;
+                try
+                {
+                    service.Show<OneShotReentrantAwareWindow>();
+                }
+                catch (Exception exception)
+                {
+                    reentrantFailure = exception;
+                }
+
+                callbackWasPreserved = ReferenceEquals(modalCallback, window.RequestClose);
+                if (reentrantFailure != null)
+                {
+                    window.Dispatcher.BeginInvoke(
+                        DispatcherPriority.Normal,
+                        new Action(() => window.RequestClose!(result)));
+                }
+            };
+
+            DialogParameters? actual = null;
+            try
+            {
+                actual = service.ShowDialog<OneShotReentrantAwareWindow>();
+            }
+            finally
+            {
+                if (window.IsVisible)
+                    window.Close();
+            }
+
+            var exception = Assert.IsType<InvalidOperationException>(reentrantFailure);
+            Assert.Contains("modal", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.True(callbackWasPreserved);
+            Assert.Same(result, actual);
+            Assert.Null(window.RequestClose);
+        });
+    }
+
+    [Fact]
+    public void ShowDialog_NestedSameWindowFailsBeforeReplacingOuterCallback()
+    {
+        StaTest.Run(() =>
+        {
+            var window = new OneShotReentrantAwareWindow();
+            using var provider = BuildProvider(services => services.AddSingleton(window));
+            var service = provider.GetRequiredService<IDialogService>();
+            Exception? nestedFailure = null;
+            var callbackWasPreserved = false;
+            window.NavigatedAction = () =>
+            {
+                var outerCallback = window.RequestClose;
+                window.Dispatcher.BeginInvoke(
+                    DispatcherPriority.Normal,
+                    new Action(window.Close));
+                try
+                {
+                    service.ShowDialog<OneShotReentrantAwareWindow>();
+                }
+                catch (Exception exception)
+                {
+                    nestedFailure = exception;
+                }
+
+                callbackWasPreserved = ReferenceEquals(outerCallback, window.RequestClose);
+            };
+
+            Assert.Null(service.ShowDialog<OneShotReentrantAwareWindow>());
+
+            var exception = Assert.IsType<InvalidOperationException>(nestedFailure);
+            Assert.Contains("modal", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.True(callbackWasPreserved);
+            Assert.Null(window.RequestClose);
         });
     }
 
