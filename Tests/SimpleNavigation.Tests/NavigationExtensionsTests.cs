@@ -429,6 +429,55 @@ public sealed class NavigationExtensionsTests
             () => InvokeRouteLookup(registry, "GetRequiredDialogType", "missing"));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void DialogRegistration_InvalidKeyDoesNotModifyServiceCollection(string? key)
+    {
+        var services = new ServiceCollection();
+        var originalDescriptors = services.ToArray();
+
+        var windowException = Assert.Throws<ArgumentException>(
+            () => services.AddWindow<FirstWindow>(key!));
+
+        Assert.Equal("key", windowException.ParamName);
+        Assert.Equal(originalDescriptors.Length, services.Count);
+        Assert.True(originalDescriptors.SequenceEqual(services));
+
+        var viewModelException = Assert.Throws<ArgumentException>(
+            () => services.AddWindow<FirstWindow, DialogViewModel>(key!));
+
+        Assert.Equal("key", viewModelException.ParamName);
+        Assert.Equal(originalDescriptors.Length, services.Count);
+        Assert.True(originalDescriptors.SequenceEqual(services));
+    }
+
+    [Fact]
+    public void DialogRegistration_DuplicateKeyDoesNotAddDescriptorsOrReplaceRoute()
+    {
+        var services = new ServiceCollection();
+        services.AddWindow<FirstWindow>("main");
+        var originalDescriptors = services.ToArray();
+
+        var exception = Assert.Throws<ArgumentException>(
+            () => services.AddWindow<SecondWindow, DialogViewModel>("main"));
+
+        Assert.Equal("key", exception.ParamName);
+        Assert.Equal(originalDescriptors.Length, services.Count);
+        Assert.True(originalDescriptors.SequenceEqual(services));
+        Assert.DoesNotContain(services, item => item.ServiceType == typeof(SecondWindow));
+        Assert.DoesNotContain(services, item => item.ServiceType == typeof(DialogViewModel));
+
+        services.RegisterNavigationService();
+        using var provider = services.BuildServiceProvider();
+        var registry = GetRouteRegistry(services, provider);
+
+        Assert.Equal(
+            typeof(FirstWindow),
+            InvokeRouteLookup(registry, "GetRequiredDialogType", "main"));
+    }
+
     private static object GetRouteRegistry(
         IServiceCollection services,
         IServiceProvider provider)
