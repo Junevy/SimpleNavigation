@@ -79,9 +79,9 @@ services.AddWindow<ReportsWindow, ReportsViewModel>("reports");
 var provider = services.BuildServiceProvider();
 ```
 
-`AddWindow` 使用 `TryAddTransient` 注册 Window 和可选的 ViewModel，不会覆盖在它之前添加的注册。需要自定义生命周期或工厂时，应先使用标准 DI 方法注册对应服务。它只负责注册，绝不会设置 Window 的 `DataContext`。
+`AddWindow` 使用 `TryAddTransient` 注册 Window 和可选的 ViewModel，不会覆盖在它之前添加的注册。需要自定义生命周期或工厂时，应先使用标准 DI 方法注册对应服务；不过，要在 `Closed` 后重新打开的 Window 注册必须能够产生新实例。singleton 注册，或在同一个仍存活 scope 中重复使用的 scoped 注册，会再次返回已经关闭的 WPF Window，后续 `Show` 将失败。`AddWindow` 默认的 transient 注册满足重新创建要求；使用 scoped Window 时，应用必须让 scope 随对应 UI 生命周期一起创建和释放。扩展方法只负责注册，绝不会设置 Window 的 `DataContext`。
 
-`AddPage` 与 `AddContent` 同样保留更早的注册，也不会创建或设置 View 的 `DataContext`。
+当前 `AddPage` 与 `AddContent` 使用 `TryAddSingleton` 注册 View 和可选的 ViewModel，这与 `AddWindow` 的 `TryAddTransient` 是有意的生命周期差异。它们同样保留更早的注册，也不会创建或设置 View 的 `DataContext`。
 
 双泛型无 key 的重载只注册 View 和 ViewModel；单泛型加 key 的重载注册 View 与路由别名；双泛型加 key 的重载同时注册 View、ViewModel 与路由别名。Page、Content 与 Dialog 的 key 空间相互独立，均采用 ordinal、区分大小写的比较；同一个 key 可以分别用于三种路由，但同一空间内不能重复注册。
 
@@ -226,7 +226,7 @@ bool closedByKey = dialogService.Close("login");
 
 泛型与 `Type` 重载只需要普通 DI 注册，不读取路由表。字符串重载先在独立的 Dialog 路由空间中按 ordinal、区分大小写的 key 查找 Window 类型，随后仍通过普通 DI 解析实例；未知 key 会抛出 `KeyNotFoundException`。Page、Content 与 Dialog 可使用相同 key，互不冲突。
 
-`AddWindow` 默认把 Window 注册为 transient，但 `DialogManager` 会在窗口仍然存活且未关闭时复用当前实例。因此，对同一 Window 类型重复 `Show` 会显示或激活当前实例；即使它当前没有焦点，`Close` 也能关闭它。窗口触发 `Closed` 后记录会移除，下一次 `Show` 才从 DI 创建新的 transient 实例。`Close` 只查询现有实例，绝不会为了关闭而创建窗口；没有受管理的现有实例时返回 `false`，`Closing` 被取消时也返回 `false`。
+`AddWindow` 默认把 Window 注册为 transient，但 `DialogManager` 会在窗口仍然存活且未关闭时复用当前实例。因此，对同一 Window 类型重复 `Show` 会显示或激活当前实例；即使它当前没有焦点，`Close` 也能关闭它。窗口触发 `Closed` 后记录会移除，下一次 `Show` 才从 DI 解析新实例。默认 transient 注册会产生新的 Window；自定义 singleton 注册或同一仍存活 scope 中复用的 scoped 注册则会返回已关闭实例，WPF 不允许再次显示该实例。`Close` 只查询现有实例，绝不会为了关闭而创建窗口；没有受管理的现有实例时返回 `false`，`Closing` 被取消时也返回 `false`。
 
 Window 以及它的、且与 Window 不同的 `DataContext` 都可以实现 `IDialogAware`，两者会按 Window、DataContext 的顺序接收参数和关闭回调。类库不会设置或替换 `DataContext`：
 
@@ -278,7 +278,7 @@ singleton 的 `PageService`、`ContentService` 和 `DialogManager` 会捕获创�
 
 因此，在启用 `ValidateScopes` 时，从根容器解析 scoped View、ViewModel 或 Window 对象图是无效的；从根容器解析的 disposable transient 对象会由 Microsoft DI 保留到根容器释放。类库不会为导航或窗口创建、持有或释放 scope，因为已显示 UI 的生命周期属于应用。
 
-需要 scoped 或 disposable View/ViewModel/Window 对象图的应用，必须在调用 `RegisterNavigationService()` 前覆盖相关导航服务和管理器的生命周期或解析策略（其 `TryAdd` 注册会保留先前注册），从应用持有的 scope 解析这些服务，并让 scope 的释放时机与对应 UI 生命周期一致。
+需要 scoped 或 disposable View/ViewModel/Window 对象图的应用，必须在调用 `RegisterNavigationService()` 前覆盖相关导航服务和管理器的生命周期或解析策略（其 `TryAdd` 注册会保留先前注册），从应用持有的 scope 解析这些服务，并让 scope 的释放时机与对应 UI 生命周期一致。特别是 scoped Window，每次关闭后若还要重新打开，必须释放旧 scope，并为下一次 UI 生命周期创建新的 scope，确保 DI 返回全新的 Window 实例。
 
 ## 区域宿主扩展边界
 
