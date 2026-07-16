@@ -8,7 +8,7 @@ SimpleNavigation 是一个基于 `Microsoft.Extensions.DependencyInjection` 的�
 
 - `PageService`：在命名的 `Frame` 区域中导航 `Page`，支持返回上一页。
 - `ContentService`：在命名的非 `Frame` `ContentControl` 区域中显示 `UserControl`、自定义 `ContentControl` 或其他非 `Page`、非 `Window` 的 `FrameworkElement`。
-- `DialogService`：通过 DI 创建并显示 `Window`；当前可靠路径是非模态显示、参数传递与关闭请求。
+- `DialogService`：通过 DI 或独立的 Dialog 字符串路由显示、模态显示和关闭 `Window`，并支持参数与模态结果传递。
 - `RegionManager`：统一管理 XAML 声明或代码注册的命名区域，并以弱引用保存区域宿主。
 
 导航目标全部由应用的 DI 容器创建。类库不设置 `DataContext`，因此 View 与 ViewModel 的构造注入和绑定方式仍由应用决定。
@@ -36,9 +36,9 @@ SimpleNavigation/
     IContentService.cs      # FrameworkElement 内容导航
     INavigationAware.cs     # 导航完成通知
     IPageAware.cs           # 兼容旧代码，继承 INavigationAware
-    IDialogService.cs       # Window 显示服务
+    IDialogService.cs       # Window 显示、模态显示与关闭服务
     IDialogAware.cs         # Window 导航与关闭通知
-    IDialogManager.cs       # Window 实例管理
+    IDialogManager.cs       # Window 获取、复用与现有实例查询
   Services/
     Region.cs               # RegionName 附加属性
     PageService.cs          # Frame/Page 导航实现
@@ -72,13 +72,18 @@ services.AddPage<ReportsPage, ReportsViewModel>("reports");
 services.AddContent<HelpView>("help");
 services.AddContent<DashboardView, DashboardViewModel>();
 services.AddContent<StatusView, StatusViewModel>("status");
+services.AddWindow<LoginWindow>("login");
+services.AddWindow<SettingsWindow, SettingsViewModel>();
+services.AddWindow<ReportsWindow, ReportsViewModel>("reports");
 
 var provider = services.BuildServiceProvider();
 ```
 
-`AddPage` 与 `AddContent` 使用 `TryAddTransient` 注册 View 和可选的 ViewModel，不会覆盖在它们之前添加的注册。需要自定义生命周期或工厂时，应先使用标准 DI 方法注册对应服务。这些扩展方法不会创建或设置 View 的 `DataContext`。
+`AddWindow` 使用 `TryAddTransient` 注册 Window 和可选的 ViewModel，不会覆盖在它之前添加的注册。需要自定义生命周期或工厂时，应先使用标准 DI 方法注册对应服务。它只负责注册，绝不会设置 Window 的 `DataContext`。
 
-双泛型无 key 的重载只注册 View 和 ViewModel；单泛型加 key 的重载注册 View 与路由别名；双泛型加 key 的重载同时注册 View、ViewModel 与路由别名。Page 与 Content 的 key 空间相互独立、区分大小写，同一空间内不能重复注册 key。
+`AddPage` 与 `AddContent` 同样保留更早的注册，也不会创建或设置 View 的 `DataContext`。
+
+双泛型无 key 的重载只注册 View 和 ViewModel；单泛型加 key 的重载注册 View 与路由别名；双泛型加 key 的重载同时注册 View、ViewModel 与路由别名。Page、Content 与 Dialog 的 key 空间相互独立，均采用 ordinal、区分大小写的比较；同一个 key 可以分别用于三种路由，但同一空间内不能重复注册。
 
 ## 声明导航区域
 
@@ -193,25 +198,40 @@ public sealed class StatusViewModel : INavigationAware
 
 ## DialogService
 
-Window 及其依赖需要先注册到 DI：
+Window 及其依赖需要先注册到 DI；需要字符串 key 时再注册 Dialog 路由：
 
 ```csharp
-services.AddTransient<TestWindow>();
-services.AddTransient<TestViewModel>();
+services.AddWindow<LoginWindow>("login");
+services.AddWindow<SettingsWindow, SettingsViewModel>();
+services.AddWindow<ReportsWindow, ReportsViewModel>("reports");
 ```
 
-使用 `IDialogService` 显示非模态窗口：
+`IDialogService` 的非模态显示、模态显示与关闭操作都提供泛型、`Type` 和字符串 key 三种形式：
 
 ```csharp
-var input = new DialogParameters("id", 42);
+dialogService.Show<LoginWindow>();
+dialogService.Show(typeof(LoginWindow));
+dialogService.Show("login");
 
-dialogService.Show<TestWindow>(input);
+DialogParameters? genericResult = dialogService.ShowDialog<LoginWindow>();
+DialogParameters? typeResult = dialogService.ShowDialog(typeof(LoginWindow));
+DialogParameters? keyResult = dialogService.ShowDialog("login");
+
+bool closedByGeneric = dialogService.Close<LoginWindow>();
+bool closedByType = dialogService.Close(typeof(LoginWindow));
+bool closedByKey = dialogService.Close("login");
 ```
 
-对于 `Show<T>`，Window 或它的 `DataContext` 可以实现 `IDialogAware` 来接收参数和请求关闭：
+`Show` 与 `ShowDialog` 的三种重载都可以额外接收 `DialogParameters`。
+
+泛型与 `Type` 重载只需要普通 DI 注册，不读取路由表。字符串重载先在独立的 Dialog 路由空间中按 ordinal、区分大小写的 key 查找 Window 类型，随后仍通过普通 DI 解析实例；未知 key 会抛出 `KeyNotFoundException`。Page、Content 与 Dialog 可使用相同 key，互不冲突。
+
+`AddWindow` 默认把 Window 注册为 transient，但 `DialogManager` 会在窗口仍然存活且未关闭时复用当前实例。因此，对同一 Window 类型重复 `Show` 会显示或激活当前实例；即使它当前没有焦点，`Close` 也能关闭它。窗口触发 `Closed` 后记录会移除，下一次 `Show` 才从 DI 创建新的 transient 实例。`Close` 只查询现有实例，绝不会为了关闭而创建窗口；没有受管理的现有实例时返回 `false`，`Closing` 被取消时也返回 `false`。
+
+Window 以及它的、且与 Window 不同的 `DataContext` 都可以实现 `IDialogAware`，两者会按 Window、DataContext 的顺序接收参数和关闭回调。类库不会设置或替换 `DataContext`：
 
 ```csharp
-public sealed class TestViewModel : IDialogAware
+public sealed class LoginViewModel : IDialogAware
 {
     public Action<DialogParameters?>? RequestClose { get; set; }
 
@@ -220,16 +240,16 @@ public sealed class TestViewModel : IDialogAware
         var id = parameters?.Get<int>("id");
     }
 
-    public void Close()
+    public void Accept()
     {
-        RequestClose?.Invoke(null);
+        RequestClose?.Invoke(new DialogParameters("accepted", true));
     }
 }
 ```
 
-`ShowDialog<T>` 当前的关闭/结果流程存在已知限制：其 `Closing` 处理会取消关闭，并可能在关闭请求中再次调用 `Close`。在 `DialogService` 修正前，不应依赖该方法完成模态关闭或返回结果。
+在模态显示中，`RequestClose(result)` 只有在 Window 实际完成关闭后才提交并由 `ShowDialog` 返回；如果关闭被取消，该候选结果不会提交。用户通过系统关闭按钮等方式直接关闭模态窗口时返回 `null`。非模态与模态操作会以事务方式安装、清理或在失败时恢复相关回调，且不会清除应用自行替换的回调。对同一 Window 的活动模态显示执行重入的 `Show`/`ShowDialog` 会被拒绝，以免覆盖当前模态事务。
 
-`DialogManager` 使用弱引用缓存同类型 Window，并在 Window 关闭后移除记录。
+Window 的显示、关闭以及 `RequestClose` 必须在其所属 Dispatcher 线程调用。
 
 ## DialogParameters
 
@@ -254,7 +274,7 @@ var value = byKey.Get<string>("key");
 
 `RegisterNavigationService()` 默认把 `IRegionManager`、`IPageService`、`IContentService`、`IDialogService` 和 `IDialogManager` 注册为 singleton。`IRegionManager` 保存命名区域宿主的弱引用，并持有静态 `Region` 声明订阅；它不解析 View 对象图，并会在所属 DI provider 释放时取消订阅。
 
-Page/Content 导航服务与 `DialogManager` 会捕获创建它们的 `IServiceProvider`（通常是根容器）；仅创建或持有一个子 scope 不会把这些 singleton 的目标解析切换到该 scope。
+Page/Content 导航服务以及 singleton 的 `DialogService`/`DialogManager` 会捕获创建它们的 `IServiceProvider`（通常是根容器）；仅创建或持有一个子 scope 不会把这些 singleton 的目标解析切换到该 scope。`AddWindow` 默认注册 transient Window 和 ViewModel，但从根 provider 解析的 disposable transient 或 scoped 对象图仍具有下述既有生命周期限制。
 
 因此，在启用 `ValidateScopes` 时，从根容器解析 scoped View、ViewModel 或 Window 对象图是无效的；从根容器解析的 disposable transient 对象会由 Microsoft DI 保留到根容器释放。类库不会为导航或窗口创建、持有或释放 scope，因为已显示 UI 的生命周期属于应用。
 
@@ -277,6 +297,8 @@ IPageService.Goback(...) -> IPageService.GoBack(...)
 ```
 
 `RegionService` 已删除。`Goback` 仅作为标记了 `Obsolete` 的转发方法保留，现有代码应迁移到 `GoBack`。由于附加属性所有者发生变化，引用旧属性的已编译 XAML/BAML 必须重新构建。
+
+Dialog API 也有破坏性变化：`IDialogService` 新增了 `Type`、字符串 key 与 `Close` 成员；自定义 `IDialogService` 实现必须补齐这些成员。自定义 `IDialogManager` 实现必须新增 `GetOrCreateWindow(Type)` 与 `GetExistingWindow(Type)`。直接构造 `DialogService` 的代码现在必须同时传入 `IServiceProvider` 和 `IDialogManager`。因此包含这些变更的 NuGet 包应作为破坏性的 2.x 版本升级处理。
 
 ## License
 
