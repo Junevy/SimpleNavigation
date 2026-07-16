@@ -80,6 +80,31 @@ namespace SimpleNavigation.Extensions
             return services;
         }
 
+        public static IServiceCollection AddWindow<TWindow>(this IServiceCollection services, string key)
+            where TWindow : Window
+        {
+            AddRoute(services, NavigationRouteKind.Dialog, key, typeof(TWindow));
+            services.TryAddTransient<TWindow>();
+            return services;
+        }
+
+        public static IServiceCollection AddWindow<TWindow, TViewModel>(this IServiceCollection services)
+            where TWindow : Window where TViewModel : class
+        {
+            services.TryAddTransient<TWindow>();
+            services.TryAddTransient<TViewModel>();
+            return services;
+        }
+
+        public static IServiceCollection AddWindow<TWindow, TViewModel>(this IServiceCollection services, string key)
+            where TWindow : Window where TViewModel : class
+        {
+            AddRoute(services, NavigationRouteKind.Dialog, key, typeof(TWindow));
+            services.TryAddTransient<TWindow>();
+            services.TryAddTransient<TViewModel>();
+            return services;
+        }
+
         private static void AddRoute(IServiceCollection services,  NavigationRouteKind kind, string key, Type targetType)
         {
             if (string.IsNullOrWhiteSpace(key))

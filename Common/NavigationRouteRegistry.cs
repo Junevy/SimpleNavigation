@@ -7,6 +7,7 @@ namespace SimpleNavigation.Common
     {
         Page,
         Content,
+        Dialog,
     }
 
     /// <summary>
@@ -32,16 +33,20 @@ namespace SimpleNavigation.Common
     {
         private readonly IReadOnlyDictionary<string, Type> pages;
         private readonly IReadOnlyDictionary<string, Type> contents;
+        private readonly IReadOnlyDictionary<string, Type> dialogs;
 
         public NavigationRouteRegistry(IEnumerable<NavigationRouteRegistration> registrations)
         {
             pages = BuildRoute(registrations, NavigationRouteKind.Page);
             contents = BuildRoute(registrations, NavigationRouteKind.Content);
+            dialogs = BuildRoute(registrations, NavigationRouteKind.Dialog);
         }
 
         public Type GetRequiredPageType(string key)  => GetRequiredTarget(pages, key, "page");
 
         public Type GetRequiredContentType(string key) => GetRequiredTarget(contents, key, "content");
+
+        public Type GetRequiredDialogType(string key) => GetRequiredTarget(dialogs, key, "dialog");
 
         /// <summary>
         /// Build µ¼º½Â·ÓÉ

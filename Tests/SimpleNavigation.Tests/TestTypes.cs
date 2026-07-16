@@ -1,5 +1,6 @@
 using SimpleNavigation.Common;
 using SimpleNavigation.Interface.Awares;
+using System.Windows;
 using System.Windows.Controls;
 
 namespace SimpleNavigation.Tests;
@@ -12,11 +13,23 @@ public sealed class SecondPage : Page
 {
 }
 
+public sealed class FirstWindow : Window
+{
+}
+
+public sealed class SecondWindow : Window
+{
+}
+
 public sealed class TestContent : UserControl
 {
 }
 
 public sealed class TestViewModel
+{
+}
+
+public sealed class DialogViewModel
 {
 }
 

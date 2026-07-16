@@ -278,6 +278,157 @@ public sealed class NavigationExtensionsTests
         Assert.Equal("key", exception.ParamName);
     }
 
+    [Fact]
+    public void DialogRegistration_AddWindowWithKey_RegistersTransientWindowAndRoute()
+    {
+        StaTest.Run(() =>
+        {
+            var services = new ServiceCollection();
+            services.AddWindow<FirstWindow>("first");
+            services.RegisterNavigationService();
+            using var provider = services.BuildServiceProvider();
+            var registry = GetRouteRegistry(services, provider);
+
+            Assert.NotSame(
+                provider.GetRequiredService<FirstWindow>(),
+                provider.GetRequiredService<FirstWindow>());
+            Assert.Equal(
+                typeof(FirstWindow),
+                InvokeRouteLookup(registry, "GetRequiredDialogType", "first"));
+        });
+    }
+
+    [Fact]
+    public void DialogRegistration_AddWindowWithViewModel_RegistersBothTransientWithoutSettingDataContext()
+    {
+        StaTest.Run(() =>
+        {
+            var services = new ServiceCollection();
+            services.AddWindow<FirstWindow, DialogViewModel>();
+            using var provider = services.BuildServiceProvider();
+
+            var firstWindow = provider.GetRequiredService<FirstWindow>();
+            var secondWindow = provider.GetRequiredService<FirstWindow>();
+
+            Assert.NotSame(firstWindow, secondWindow);
+            Assert.Null(firstWindow.DataContext);
+            Assert.NotSame(
+                provider.GetRequiredService<DialogViewModel>(),
+                provider.GetRequiredService<DialogViewModel>());
+        });
+    }
+
+    [Fact]
+    public void DialogRegistration_AddWindowWithViewModelAndKey_RegistersBothTransientAndRoute()
+    {
+        StaTest.Run(() =>
+        {
+            var services = new ServiceCollection();
+            services.RegisterNavigationService();
+            services.AddWindow<FirstWindow, DialogViewModel>("first");
+            using var provider = services.BuildServiceProvider();
+            var registry = GetRouteRegistry(services, provider);
+
+            Assert.NotSame(
+                provider.GetRequiredService<FirstWindow>(),
+                provider.GetRequiredService<FirstWindow>());
+            Assert.NotSame(
+                provider.GetRequiredService<DialogViewModel>(),
+                provider.GetRequiredService<DialogViewModel>());
+            Assert.Equal(
+                typeof(FirstWindow),
+                InvokeRouteLookup(registry, "GetRequiredDialogType", "first"));
+        });
+    }
+
+    [Fact]
+    public void DialogRegistration_AddWindowPreservesEarlierSingletonRegistrations()
+    {
+        StaTest.Run(() =>
+        {
+            var window = new FirstWindow();
+            var viewModel = new DialogViewModel();
+            var services = new ServiceCollection();
+            services.AddSingleton(window);
+            services.AddSingleton(viewModel);
+
+            services.AddWindow<FirstWindow, DialogViewModel>("first");
+            using var provider = services.BuildServiceProvider();
+
+            Assert.Same(window, provider.GetRequiredService<FirstWindow>());
+            Assert.Same(viewModel, provider.GetRequiredService<DialogViewModel>());
+        });
+    }
+
+    [Fact]
+    public void DialogRoutes_UseOrdinalCaseSensitiveKeysAndRejectDuplicatesWithinDialogOnly()
+    {
+        var services = new ServiceCollection();
+        services.AddPage<FirstPage>("main");
+        services.AddContent<TestContent>("main");
+        services.AddWindow<FirstWindow>("main");
+        services.AddWindow<SecondWindow>("Main");
+        services.RegisterNavigationService();
+        using var provider = services.BuildServiceProvider();
+        var registry = GetRouteRegistry(services, provider);
+
+        var exception = Assert.Throws<ArgumentException>(
+            () => services.AddWindow<SecondWindow>("main"));
+
+        Assert.Equal("key", exception.ParamName);
+        Assert.Equal(
+            typeof(FirstWindow),
+            InvokeRouteLookup(registry, "GetRequiredDialogType", "main"));
+        Assert.Equal(
+            typeof(SecondWindow),
+            InvokeRouteLookup(registry, "GetRequiredDialogType", "Main"));
+    }
+
+    [Fact]
+    public void DialogRoutes_RegisteredBeforeAndAfterCoreRegistration_AreAvailable()
+    {
+        var services = new ServiceCollection();
+        services.AddWindow<FirstWindow>("first");
+        services.RegisterNavigationService();
+        services.AddWindow<SecondWindow>("second");
+        using var provider = services.BuildServiceProvider();
+        var registry = GetRouteRegistry(services, provider);
+
+        Assert.Equal(
+            typeof(FirstWindow),
+            InvokeRouteLookup(registry, "GetRequiredDialogType", "first"));
+        Assert.Equal(
+            typeof(SecondWindow),
+            InvokeRouteLookup(registry, "GetRequiredDialogType", "second"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void DialogRoutes_InvalidKeysThrowArgumentException(string? key)
+    {
+        var services = new ServiceCollection();
+        services.RegisterNavigationService();
+        using var provider = services.BuildServiceProvider();
+        var registry = GetRouteRegistry(services, provider);
+
+        Assert.Throws<ArgumentException>(
+            () => InvokeRouteLookup(registry, "GetRequiredDialogType", key));
+    }
+
+    [Fact]
+    public void DialogRoutes_UnknownKeyThrowsKeyNotFoundException()
+    {
+        var services = new ServiceCollection();
+        services.RegisterNavigationService();
+        using var provider = services.BuildServiceProvider();
+        var registry = GetRouteRegistry(services, provider);
+
+        Assert.Throws<KeyNotFoundException>(
+            () => InvokeRouteLookup(registry, "GetRequiredDialogType", "missing"));
+    }
+
     private static object GetRouteRegistry(
         IServiceCollection services,
         IServiceProvider provider)
