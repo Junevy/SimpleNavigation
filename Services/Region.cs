@@ -320,13 +320,13 @@ namespace SimpleNavigation.Services
 
         private static void OnHostUnloaded(object sender, RoutedEventArgs eventArgs)
         {
-            //if (sender is not FrameworkElement host)
-            //    return;
+            if (sender is not FrameworkElement host)
+                return;
 
-            //lock (PublicationGate)
-            //{
-            //    DeactivateHostUnderPublicationGate(host);
-            //}
+            lock (PublicationGate)
+            {
+                DeactivateHostUnderPublicationGate(host);
+            }
         }
 
         private static void DeactivateHostUnderPublicationGate(FrameworkElement host)
