@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleNavigation.Common.Managers;
 using SimpleNavigation.Tests.TestInfrastructure;
@@ -207,71 +208,198 @@ public sealed class DialogManagerTests
     }
 
     [Fact]
-    public void GetOrCreateWindow_ConcurrentCallers_ResolveOneTransientInstance()
+    public void GetOrCreateWindow_BlockedType_DoesNotBlockUnrelatedOperationsAndResolvesOnce()
     {
         StaTest.Run(() =>
         {
-            var provider = new CoordinatedServiceProvider();
+            using var provider = new MultiTypeCoordinatedServiceProvider();
             var manager = new DialogManager(provider);
-            Window? firstResult = null;
-            Window? secondResult = null;
-            Exception? firstException = null;
-            Exception? secondException = null;
-            using var secondCallStarted = new ManualResetEventSlim();
+            Window? ownerResult = null;
+            Window? waiterResult = null;
+            Window? existingResult = null;
+            Window? unrelatedResult = null;
+            Exception? ownerException = null;
+            Exception? waiterException = null;
+            Exception? existingException = null;
+            Exception? unrelatedException = null;
+            using var waiterStarted = new ManualResetEventSlim();
+            using var existingCompleted = new ManualResetEventSlim();
+            using var unrelatedCompleted = new ManualResetEventSlim();
+            using var ownerMayClose = new ManualResetEventSlim();
 
-            var firstThread = CreateStaThread(() =>
+            var ownerThread = CreateStaThread(() =>
             {
                 try
                 {
-                    firstResult = manager.GetOrCreateWindow(typeof(ConcurrentWindow));
+                    ownerResult = manager.GetOrCreateWindow(typeof(FirstWindow));
+                    ownerMayClose.Wait(TimeSpan.FromSeconds(10));
+                    ownerResult.Close();
                 }
                 catch (Exception exception)
                 {
-                    firstException = exception;
+                    ownerException = exception;
                 }
             });
-            var secondThread = CreateStaThread(() =>
+            var waiterThread = CreateStaThread(() =>
             {
-                secondCallStarted.Set();
+                waiterStarted.Set();
                 try
                 {
-                    secondResult = manager.GetOrCreateWindow(typeof(ConcurrentWindow));
+                    waiterResult = manager.GetOrCreateWindow(typeof(FirstWindow));
                 }
                 catch (Exception exception)
                 {
-                    secondException = exception;
+                    waiterException = exception;
+                }
+            });
+            var existingThread = CreateStaThread(() =>
+            {
+                try
+                {
+                    existingResult = manager.GetExistingWindow(typeof(FirstWindow));
+                }
+                catch (Exception exception)
+                {
+                    existingException = exception;
+                }
+                finally
+                {
+                    existingCompleted.Set();
+                }
+            });
+            var unrelatedThread = CreateStaThread(() =>
+            {
+                try
+                {
+                    unrelatedResult = manager.GetOrCreateWindow(typeof(SecondWindow));
+                    unrelatedResult.Close();
+                }
+                catch (Exception exception)
+                {
+                    unrelatedException = exception;
+                }
+                finally
+                {
+                    unrelatedCompleted.Set();
                 }
             });
 
-            firstThread.Start();
+            var existingMadeProgress = false;
+            var unrelatedMadeProgress = false;
+            ownerThread.Start();
             try
             {
                 Assert.True(provider.FirstResolutionEntered.Wait(TimeSpan.FromSeconds(5)));
-                secondThread.Start();
-                Assert.True(secondCallStarted.Wait(TimeSpan.FromSeconds(5)));
+                waiterThread.Start();
+                Assert.True(waiterStarted.Wait(TimeSpan.FromSeconds(5)));
                 Assert.True(
                     SpinWait.SpinUntil(
-                        () => Volatile.Read(ref provider.ResolutionCount) > 1
-                            || (secondThread.ThreadState & ThreadState.WaitSleepJoin) != 0,
+                        () => (waiterThread.ThreadState & ThreadState.WaitSleepJoin) != 0,
                         TimeSpan.FromSeconds(5)),
-                    "The second caller neither entered DI resolution nor waited for the first caller.");
+                    "The same-type caller did not wait for the in-flight resolution.");
+
+                existingThread.Start();
+                unrelatedThread.Start();
+                existingMadeProgress = existingCompleted.Wait(TimeSpan.FromSeconds(2));
+                unrelatedMadeProgress = unrelatedCompleted.Wait(TimeSpan.FromSeconds(2));
             }
             finally
             {
                 provider.ReleaseFirstResolution.Set();
-                Assert.True(firstThread.Join(TimeSpan.FromSeconds(5)));
-                if (secondThread.ThreadState != ThreadState.Unstarted)
-                {
-                    Assert.True(secondThread.Join(TimeSpan.FromSeconds(5)));
-                }
+                JoinIfStarted(waiterThread);
+                JoinIfStarted(existingThread);
+                JoinIfStarted(unrelatedThread);
+                ownerMayClose.Set();
+                JoinIfStarted(ownerThread);
             }
 
-            Assert.Null(firstException);
-            Assert.Null(secondException);
+            Assert.True(existingMadeProgress, "GetExistingWindow blocked behind unrelated DI resolution.");
+            Assert.True(unrelatedMadeProgress, "A different window type blocked behind unrelated DI resolution.");
+            Assert.Null(ownerException);
+            Assert.Null(waiterException);
+            Assert.Null(existingException);
+            Assert.Null(unrelatedException);
+            Assert.Null(existingResult);
+            Assert.Equal(1, provider.FirstResolutionCount);
+            Assert.NotNull(ownerResult);
+            Assert.Same(ownerResult, waiterResult);
+            Assert.IsType<SecondWindow>(unrelatedResult);
+            GC.KeepAlive(ownerResult);
+        });
+    }
+
+    [Fact]
+    public void GetOrCreateWindow_FailedResolution_WakesWaitersAndLaterCallRetries()
+    {
+        StaTest.Run(() =>
+        {
+            using var provider = new FailingThenSuccessfulServiceProvider();
+            var manager = new DialogManager(provider);
+            Exception? ownerException = null;
+            Exception? waiterException = null;
+            Window? waiterResult = null;
+            using var waiterStarted = new ManualResetEventSlim();
+
+            var ownerThread = CreateStaThread(() =>
+            {
+                try
+                {
+                    manager.GetOrCreateWindow(typeof(FailureWindow));
+                }
+                catch (Exception exception)
+                {
+                    ownerException = exception;
+                }
+            });
+            var waiterThread = CreateStaThread(() =>
+            {
+                waiterStarted.Set();
+                try
+                {
+                    waiterResult = manager.GetOrCreateWindow(typeof(FailureWindow));
+                }
+                catch (Exception exception)
+                {
+                    waiterException = exception;
+                }
+                finally
+                {
+                    if (waiterResult != null)
+                    {
+                        waiterResult.Close();
+                    }
+                }
+            });
+
+            ownerThread.Start();
+            try
+            {
+                Assert.True(provider.FirstResolutionEntered.Wait(TimeSpan.FromSeconds(5)));
+                waiterThread.Start();
+                Assert.True(waiterStarted.Wait(TimeSpan.FromSeconds(5)));
+                Assert.True(
+                    SpinWait.SpinUntil(
+                        () => (waiterThread.ThreadState & ThreadState.WaitSleepJoin) != 0,
+                        TimeSpan.FromSeconds(5)),
+                    "The waiter did not wait for the failing in-flight resolution.");
+            }
+            finally
+            {
+                provider.ReleaseFirstResolution.Set();
+                JoinIfStarted(ownerThread);
+                JoinIfStarted(waiterThread);
+            }
+
+            Assert.Same(provider.ExpectedFailure, ownerException);
+            Assert.Same(provider.ExpectedFailure, waiterException);
+            Assert.Null(waiterResult);
             Assert.Equal(1, provider.ResolutionCount);
-            Assert.NotNull(firstResult);
-            Assert.Same(firstResult, secondResult);
-            GC.KeepAlive(firstResult);
+
+            var retry = manager.GetOrCreateWindow(typeof(FailureWindow));
+
+            Assert.IsType<FailureWindow>(retry);
+            Assert.Equal(2, provider.ResolutionCount);
+            retry.Close();
         });
     }
 
@@ -337,12 +465,30 @@ public sealed class DialogManagerTests
 
     private static Thread CreateStaThread(ThreadStart action)
     {
-        var thread = new Thread(action)
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                action();
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        })
         {
             IsBackground = true,
         };
         thread.SetApartmentState(ApartmentState.STA);
         return thread;
+    }
+
+    private static void JoinIfStarted(Thread thread)
+    {
+        if (thread.ThreadState != ThreadState.Unstarted)
+        {
+            Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "An STA worker did not finish.");
+        }
     }
 
     private sealed class ManagedWindow : Window
@@ -353,7 +499,7 @@ public sealed class DialogManagerTests
     {
     }
 
-    private sealed class ConcurrentWindow : Window
+    private sealed class FailureWindow : Window
     {
     }
 
@@ -374,10 +520,46 @@ public sealed class DialogManagerTests
         public object? GetService(Type serviceType) => window;
     }
 
-    private sealed class CoordinatedServiceProvider : IServiceProvider
+    private sealed class MultiTypeCoordinatedServiceProvider : IServiceProvider, IDisposable
     {
         public readonly ManualResetEventSlim FirstResolutionEntered = new();
         public readonly ManualResetEventSlim ReleaseFirstResolution = new();
+        public int FirstResolutionCount;
+
+        public object? GetService(Type serviceType)
+        {
+            if (serviceType == typeof(FirstWindow))
+            {
+                Interlocked.Increment(ref FirstResolutionCount);
+                FirstResolutionEntered.Set();
+                if (!ReleaseFirstResolution.Wait(TimeSpan.FromSeconds(15)))
+                {
+                    throw new TimeoutException("The first resolution was not released by the test.");
+                }
+
+                return new FirstWindow();
+            }
+
+            if (serviceType == typeof(SecondWindow))
+            {
+                return new SecondWindow();
+            }
+
+            return null;
+        }
+
+        public void Dispose()
+        {
+            FirstResolutionEntered.Dispose();
+            ReleaseFirstResolution.Dispose();
+        }
+    }
+
+    private sealed class FailingThenSuccessfulServiceProvider : IServiceProvider, IDisposable
+    {
+        public readonly ManualResetEventSlim FirstResolutionEntered = new();
+        public readonly ManualResetEventSlim ReleaseFirstResolution = new();
+        public readonly InvalidOperationException ExpectedFailure = new("expected resolution failure");
         public int ResolutionCount;
 
         public object? GetService(Type serviceType)
@@ -386,13 +568,21 @@ public sealed class DialogManagerTests
             if (resolution == 1)
             {
                 FirstResolutionEntered.Set();
-                if (!ReleaseFirstResolution.Wait(TimeSpan.FromSeconds(5)))
+                if (!ReleaseFirstResolution.Wait(TimeSpan.FromSeconds(15)))
                 {
-                    throw new TimeoutException("The first resolution was not released by the test.");
+                    throw new TimeoutException("The failing resolution was not released by the test.");
                 }
+
+                throw ExpectedFailure;
             }
 
-            return new ConcurrentWindow();
+            return new FailureWindow();
+        }
+
+        public void Dispose()
+        {
+            FirstResolutionEntered.Dispose();
+            ReleaseFirstResolution.Dispose();
         }
     }
 }

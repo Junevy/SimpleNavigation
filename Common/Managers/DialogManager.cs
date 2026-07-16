@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleNavigation.Interface.Managers;
@@ -9,7 +10,7 @@ namespace SimpleNavigation.Common.Managers
         private readonly IServiceProvider provider;
         private readonly object syncRoot = new();
         private readonly Dictionary<Type, WeakReference<Window>> dialogWindows = new();
-        private readonly HashSet<Type> resolvingTypes = new();
+        private readonly Dictionary<Type, ResolutionState> resolutionStates = new();
 
         public DialogManager(IServiceProvider provider)
         {
@@ -38,45 +39,99 @@ namespace SimpleNavigation.Common.Managers
         {
             ValidateWindowType(windowType);
 
-            lock (syncRoot)
+            while (true)
             {
-                var existingWindow = GetExistingWindowLocked(windowType);
-                if (existingWindow != null)
+                ResolutionState resolutionState;
+                var ownsResolution = false;
+
+                lock (syncRoot)
                 {
-                    return existingWindow;
+                    var existingWindow = GetExistingWindowLocked(windowType);
+                    if (existingWindow != null)
+                    {
+                        return existingWindow;
+                    }
+
+                    if (resolutionStates.TryGetValue(windowType, out var activeResolutionState))
+                    {
+                        resolutionState = activeResolutionState;
+                        if (resolutionState.OwnerThreadId == Environment.CurrentManagedThreadId)
+                        {
+                            throw new InvalidOperationException(
+                                $"Window type '{windowType.FullName}' is already being resolved by this dialog manager.");
+                        }
+                    }
+                    else
+                    {
+                        resolutionState = new ResolutionState(Environment.CurrentManagedThreadId);
+                        resolutionStates.Add(windowType, resolutionState);
+                        ownsResolution = true;
+                    }
                 }
 
-                if (!resolvingTypes.Add(windowType))
+                if (ownsResolution)
+                {
+                    return ResolveAndPublishWindow(windowType, resolutionState);
+                }
+
+                resolutionState.Completion.Task.GetAwaiter().GetResult();
+                if (resolutionState.ResolutionException != null)
+                {
+                    resolutionState.ResolutionException.Throw();
+                }
+            }
+        }
+
+        private Window ResolveAndPublishWindow(Type windowType, ResolutionState resolutionState)
+        {
+            try
+            {
+                var service = provider.GetRequiredService(windowType);
+                if (service is not Window newWindow)
                 {
                     throw new InvalidOperationException(
-                        $"Window type '{windowType.FullName}' is already being resolved by this dialog manager.");
+                        $"The service registered for window type '{windowType.FullName}' resolved to " +
+                        $"'{service.GetType().FullName}', which is not a '{typeof(Window).FullName}'.");
                 }
 
-                try
+                if (newWindow.GetType() != windowType)
                 {
-                    var service = provider.GetRequiredService(windowType);
-                    if (service is not Window newWindow)
-                    {
-                        throw new InvalidOperationException(
-                            $"The service registered for window type '{windowType.FullName}' resolved to " +
-                            $"'{service.GetType().FullName}', which is not a '{typeof(Window).FullName}'.");
-                    }
+                    throw new InvalidOperationException(
+                        $"The service registered for window type '{windowType.FullName}' resolved to " +
+                        $"the different window type '{newWindow.GetType().FullName}'.");
+                }
 
-                    if (newWindow.GetType() != windowType)
-                    {
-                        throw new InvalidOperationException(
-                            $"The service registered for window type '{windowType.FullName}' resolved to " +
-                            $"the different window type '{newWindow.GetType().FullName}'.");
-                    }
+                newWindow.Closed += OnWindowClosed;
 
-                    newWindow.Closed += OnWindowClosed;
+                lock (syncRoot)
+                {
                     dialogWindows[windowType] = new WeakReference<Window>(newWindow);
-                    return newWindow;
+                    RemoveResolutionStateLocked(windowType, resolutionState);
                 }
-                finally
+
+                resolutionState.Completion.TrySetResult(true);
+                return newWindow;
+            }
+            catch (Exception exception)
+            {
+                resolutionState.ResolutionException = ExceptionDispatchInfo.Capture(exception);
+
+                lock (syncRoot)
                 {
-                    resolvingTypes.Remove(windowType);
+                    RemoveResolutionStateLocked(windowType, resolutionState);
                 }
+
+                resolutionState.Completion.TrySetResult(true);
+                throw;
+            }
+        }
+
+        private void RemoveResolutionStateLocked(Type windowType, ResolutionState resolutionState)
+        {
+            if (resolutionStates.TryGetValue(windowType, out var currentState)
+                && ReferenceEquals(currentState, resolutionState))
+            {
+                resolutionStates.Remove(windowType);
             }
         }
 
@@ -128,6 +183,21 @@ namespace SimpleNavigation.Common.Managers
                     $"Type '{windowType.FullName}' must derive from '{typeof(Window).FullName}'.",
                     nameof(windowType));
             }
+        }
+
+        private sealed class ResolutionState
+        {
+            public ResolutionState(int ownerThreadId)
+            {
+                OwnerThreadId = ownerThreadId;
+                Completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            public int OwnerThreadId { get; }
+
+            public TaskCompletionSource<bool> Completion { get; }
+
+            public ExceptionDispatchInfo? ResolutionException { get; set; }
         }
     }
 }
