@@ -9,7 +9,7 @@ internal sealed class ContentControlRegionAdapter : IContentRegionHostAdapter
     public RegionHostKind Kind => RegionHostKind.Content;
 
     public bool CanHandle(FrameworkElement region)
-        => region is ContentControl && region is not Frame;
+        => region is ContentControl && region is not Frame && region is not TabControl;
 
     public void Present(FrameworkElement host, FrameworkElement content)
     {

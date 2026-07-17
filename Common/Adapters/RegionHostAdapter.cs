@@ -19,8 +19,11 @@ internal static class RegionHostAdapterResolver
 {
     private static readonly IRegionHostAdapter[] HostAdapters =
     {
+
         new FrameRegionAdapter(),
+        new TabControlRegionAdapter(),
         new ContentControlRegionAdapter(),
+
     };
 
     /// <summary>
