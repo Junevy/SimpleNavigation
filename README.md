@@ -2,327 +2,303 @@
 
 [![NuGet](https://img.shields.io/nuget/v/Junevy.SimpleNavigation.svg)](https://www.nuget.org/packages/Junevy.SimpleNavigation/)
 
-一个超轻量级的 WPF 导航框架，基于 `Microsoft.Extensions.DependencyInjection` 构建，让 WPF 应用的页面导航和窗口管理变得简单直观。
+SimpleNavigation 是一个基于 `Microsoft.Extensions.DependencyInjection` 的轻量级 WPF 导航类库，支持 .NET 8 WPF 与 .NET Framework 4.8。
 
----
+## 功能概览
 
-## 项目介绍
+- `PageService`：在命名的 `Frame` 区域中导航 `Page`，支持返回上一页。
+- `ContentService`：在命名的非 `Frame` `ContentControl` 区域中显示 `UserControl`、自定义 `ContentControl` 或其他非 `Page`、非 `Window` 的 `FrameworkElement`。
+- `DialogService`：通过 DI 或独立的 Dialog 字符串路由显示、模态显示和关闭 `Window`，并支持参数与模态结果传递。
+- `RegionManager`：统一管理 XAML 声明或代码注册的命名区域，并以弱引用保存区域宿主。
 
-SimpleNavigation 是一个受 Prism 启发的 WPF 导航库，但去除了 Prism 的复杂性，仅保留最核心的导航能力。整个框架仅包含 11 个 C# 源文件，零额外依赖（只依赖微软官方的 DI 容器），提供三大核心功能：
-
-- **区域（Region）页面导航** — 在命名 `Frame` 区域内进行 `Page` 的导航与回退
-- **窗口（Dialog）管理** — 打开 WPF `Window`，支持模态/非模态、参数传递与结果返回
-- **导航参数传递** — 通过 `DialogParameters` 在页面和窗口之间传递强类型参数
-
-配合 `CommunityToolkit.Mvvm` 使用效果更佳。
-
----
+导航目标全部由应用的 DI 容器创建。类库不设置 `DataContext`，因此 View 与 ViewModel 的构造注入和绑定方式仍由应用决定。
 
 ## 环境要求
 
-| 目标框架 | 说明 |
-|----------|------|
-| `.NET 8.0` (net8.0-windows) | 现代 .NET WPF 应用 |
-| `.NET Framework 4.8` (net48) | 传统 .NET Framework WPF 应用 |
+| 目标框架 | DI 依赖 |
+| --- | --- |
+| `net8.0-windows` | `Microsoft.Extensions.DependencyInjection` 8.0.0 |
+| `net48` | `Microsoft.Extensions.DependencyInjection` 6.0.1 |
 
-开发环境：Visual Studio 2022 (v17.14+)，C# 13。
-
----
-
-## 依赖信息
-
-### NuGet 包
-
-```
-Junevy.SimpleNavigation
-```
-
-### 框架依赖
-
-| 目标框架 | 依赖项 | 版本 |
-|----------|--------|------|
-| net8.0-windows | `Microsoft.Extensions.DependencyInjection` | 8.0.0 |
-| net48 | `Microsoft.Extensions.DependencyInjection` | 6.0.1 |
-
-仅依赖微软官方的 DI 容器，无需 Prism 或其他重型框架。
-
----
-
-## 功能简介与演示
-
-### 1. 项目结构
-
-```
-SimpleNavigation/
-├── Common/
-│   ├── DialogManager.cs        # 窗口生命周期管理，WeakReference 缓存防止内存泄漏
-│   └── DialogParameters.cs     # 导航参数对象，支持字典/索引/键值三种构造
-├── Extensions/
-│   └── NavigationExtensions.cs # DI 容器注册扩展方法
-├── Interface/
-│   ├── IPageService.cs         # 页面导航服务接口
-│   ├── IPageAware.cs           # 页面感知接口（接收导航事件）
-│   ├── IDialogService.cs       # 窗口服务接口
-│   ├── IDialogAware.cs         # 窗口感知接口（接收导航事件 + 请求关闭）
-│   └── IDialogManager.cs       # 窗口实例管理接口
-└── Services/
-    ├── PageService.cs          # 页面导航实现
-    ├── DialogService.cs        # 窗口管理实现
-    └── RegionService.cs        # 区域附加属性（XAML 声明式注册）
-```
-
-### 2. 快速开始
-
-#### 2.1 安装
-
-通过 NuGet 安装：
+安装 NuGet 包：
 
 ```bash
 dotnet add package Junevy.SimpleNavigation
 ```
 
-或使用 Package Manager：
+## 项目结构
 
+```text
+SimpleNavigation/
+  Interface/
+    IRegionManager.cs       # 区域注册与查询
+    IPageService.cs         # Page 导航
+    IContentService.cs      # FrameworkElement 内容导航
+    INavigationAware.cs     # 导航完成通知
+    IPageAware.cs           # 兼容旧代码，继承 INavigationAware
+    IDialogService.cs       # Window 显示、模态显示与关闭服务
+    IDialogAware.cs         # Window 导航与关闭通知
+    IDialogManager.cs       # Window 获取、复用与现有实例查询
+  Services/
+    Region.cs               # RegionName 附加属性
+    PageService.cs          # Frame/Page 导航实现
+    ContentService.cs       # ContentControl 内容导航实现
+    DialogService.cs        # Window 显示实现
+  Common/
+    RegionManager.cs        # 命名区域管理
+    DialogManager.cs        # Window 实例管理
+    DialogParameters.cs     # 导航参数
+  Extensions/
+    NavigationExtensions.cs # DI 与路由注册扩展
 ```
-Install-Package Junevy.SimpleNavigation
-```
 
-#### 2.2 注册导航服务
-
-在 `App.xaml.cs` 中使用一行代码完成所有服务注册：
+## 注册服务和目标
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 using SimpleNavigation.Extensions;
 
-public partial class App : Application
-{
-    public IServiceProvider Provider { get; private set; }
+var services = new ServiceCollection();
+services.RegisterNavigationService();
 
-    public void InitialProvider()
-    {
-        var container = new ServiceCollection();
+// 普通 DI 注册足以支持泛型导航和 Type 导航。
+services.AddTransient<HomePage>();
+services.AddSingleton<HomeViewModel>();
 
-        // 注册导航服务（一行注册 IDialogService / IPageService / IDialogManager）
-        container.RegisterNavigationService();
+// 路由扩展可同时注册 View/ViewModel，并可选择添加字符串别名。
+services.AddPage<SettingsPage>("settings");
+services.AddPage<ProfilePage, ProfileViewModel>();
+services.AddPage<ReportsPage, ReportsViewModel>("reports");
+services.AddContent<HelpView>("help");
+services.AddContent<DashboardView, DashboardViewModel>();
+services.AddContent<StatusView, StatusViewModel>("status");
+services.AddWindow<LoginWindow>("login");
+services.AddWindow<SettingsWindow, SettingsViewModel>();
+services.AddWindow<ReportsWindow, ReportsViewModel>("reports");
 
-        // 注册你的页面、窗口和 ViewModel
-        container.AddTransient<MainWindow>();
-        container.AddSingleton<MainWindowViewModel>();
-        container.AddTransient<TestWindow>();
-        container.AddSingleton<TestViewModel>();
-        container.AddSingleton((p) => new TestPage() { ShowsNavigationUI = false });
-
-        Provider = container.BuildServiceProvider();
-    }
-}
+var provider = services.BuildServiceProvider();
 ```
 
-#### 2.3 注册导航区域（Region）
+`AddWindow` 使用 `TryAddTransient` 注册 Window 和可选的 ViewModel，不会覆盖在它之前添加的注册。需要自定义生命周期或工厂时，应先使用标准 DI 方法注册对应服务；不过，要在 `Closed` 后重新打开的 Window 注册必须能够产生新实例。singleton 注册，或在同一个仍存活 scope 中重复使用的 scoped 注册，会再次返回已经关闭的 WPF Window，后续 `Show` 将失败。`AddWindow` 默认的 transient 注册满足重新创建要求；使用 scoped Window 时，应用必须让 scope 随对应 UI 生命周期一起创建和释放。扩展方法只负责注册，绝不会设置 Window 的 `DataContext`。
 
-在 XAML 中通过附加属性声明导航区域：
+当前 `AddPage` 与 `AddContent` 使用 `TryAddSingleton` 注册 View 和可选的 ViewModel，这与 `AddWindow` 的 `TryAddTransient` 是有意的生命周期差异。它们同样保留更早的注册，也不会创建或设置 View 的 `DataContext`。
+
+双泛型无 key 的重载只注册 View 和 ViewModel；单泛型加 key 的重载注册 View 与路由别名；双泛型加 key 的重载同时注册 View、ViewModel 与路由别名。Page、Content 与 Dialog 的 key 空间相互独立，均采用 ordinal、区分大小写的比较；同一个 key 可以分别用于三种路由，但同一空间内不能重复注册。
+
+## 声明导航区域
 
 ```xml
-<Window x:Class="SimpleNavigationDemo.MainWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:sn="clr-namespace:SimpleNavigation.Services;assembly=SimpleNavigation">
-
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:sn="clr-namespace:SimpleNavigation.Services;assembly=SimpleNavigation">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition MaxHeight="20" />
+            <RowDefinition />
             <RowDefinition />
         </Grid.RowDefinitions>
 
-        <Menu Grid.Row="0">
-            <MenuItem Header="Test">
-                <MenuItem Command="{Binding OpenWindowCommand}" Header="打开窗口" />
-                <MenuItem Command="{Binding RegionTestCommand}" Header="页面导航" />
-            </MenuItem>
-        </Menu>
+        <Frame
+            Grid.Row="0"
+            NavigationUIVisibility="Hidden"
+            sn:Region.RegionName="Pages" />
 
-        <!-- 声明一个名为 "Main" 的导航区域 -->
-        <Frame Grid.Row="1" sn:RegionService.RegionName="Main" />
+        <ContentControl
+            Grid.Row="1"
+            sn:Region.RegionName="Content" />
     </Grid>
 </Window>
 ```
 
-> `RegionService.RegionName` 只能附加到 `Frame` 控件上，否则会抛出异常。
+`PageService` 的区域宿主必须是 `Frame`。`ContentService` 当前要求区域宿主是非 `Frame` 的 `ContentControl`。也可以通过 `IRegionManager.RegisterRegion(...)` 显式注册宿主，并通过 `GetRegion(...)` 查询。
 
-### 3. 页面导航
+## Page 导航
 
-#### 3.1 导航到指定页面
+`IPageService` 提供泛型、`Type` 和字符串 key 三种导航方式：
 
 ```csharp
-using SimpleNavigation.Interface;
 using SimpleNavigation.Common;
+using SimpleNavigation.Interface;
 
-public class MainWindowViewModel
+public sealed class MainViewModel
 {
     private readonly IPageService pageService;
 
-    public MainWindowViewModel(IPageService pageService)
+    public MainViewModel(IPageService pageService)
     {
         this.pageService = pageService;
     }
 
-    [RelayCommand]
-    public void RegionTest()
+    public void OpenPages()
     {
-        // 泛型方式导航
-        pageService.Navigate<TestPage>("Main");
+        var parameters = new DialogParameters("id", 42);
 
-        // 带参数导航
-        var parameters = new DialogParameters("key", "value");
-        pageService.Navigate<TestPage>("Main", parameters);
-
-        // Type 方式导航
-        pageService.Navigate("Main", typeof(TestPage), parameters);
+        pageService.Navigate<HomePage>("Pages", parameters);
+        pageService.Navigate("Pages", typeof(HomePage), parameters);
+        pageService.Navigate("Pages", "settings", parameters);
     }
 
-    [RelayCommand]
-    public void GoBack()
+    public void Back()
     {
-        // 返回上一页
-        pageService.Goback("Main");
+        pageService.GoBack("Pages");
     }
 }
 ```
 
-#### 3.2 页面接收参数
+泛型重载直接从 DI 解析泛型类型，`Type` 重载直接从 DI 解析传入类型。只有字符串重载先从 Page 路由字典取得最终类型；取得类型后仍通过普通 DI 解析 Page 实例。
 
-让 ViewModel 实现 `IPageAware` 接口：
+## Content 导航
+
+`IContentService` 同样提供三种导航方式：
 
 ```csharp
 using SimpleNavigation.Common;
 using SimpleNavigation.Interface;
 
-public class TestViewModel : IPageAware
+public sealed class ShellViewModel
 {
-    public event Action<DialogParameters?>? Receive;
+    private readonly IContentService contentService;
 
+    public ShellViewModel(IContentService contentService)
+    {
+        this.contentService = contentService;
+    }
+
+    public void OpenContent()
+    {
+        var parameters = new DialogParameters("id", 42);
+
+        contentService.Navigate<DashboardView>("Content", parameters);
+        contentService.Navigate("Content", typeof(DashboardView), parameters);
+        contentService.Navigate("Content", "status", parameters);
+    }
+}
+```
+
+泛型与 `Type` 重载不读取路由表。只有字符串重载从 Content 路由字典取得最终类型，随后通过普通 DI 解析实例。导航目标可以是 `UserControl`、普通或自定义 `ContentControl`、`Grid`、`StackPanel` 等 `FrameworkElement`，但不能是 `Page` 或 `Window`。
+
+## 导航通知
+
+Page 或 Content 导航成功后，目标 View 及其 `DataContext` 中实现了 `INavigationAware` 的对象都会收到通知；如果二者是同一实例，则只通知一次。
+
+```csharp
+using SimpleNavigation.Common;
+using SimpleNavigation.Interface;
+
+public sealed class StatusViewModel : INavigationAware
+{
     public void OnNavigated(DialogParameters? parameters)
     {
-        if (parameters != null)
-        {
-            var value = parameters.Get<string>("key");
-            // 处理导航参数
-        }
+        var id = parameters?.Get<int>("id");
     }
 }
 ```
 
-### 4. 窗口（Dialog）管理
+类库只发送通知，不负责把 `StatusViewModel` 设置为 View 的 `DataContext`。
 
-#### 4.1 打开窗口
+## DialogService
+
+Window 及其依赖需要先注册到 DI；需要字符串 key 时再注册 Dialog 路由：
 
 ```csharp
-using SimpleNavigation.Interface;
-using SimpleNavigation.Common;
-
-public class MainWindowViewModel
-{
-    private readonly IDialogService dialogService;
-
-    public MainWindowViewModel(IDialogService dialogService)
-    {
-        this.dialogService = dialogService;
-    }
-
-    [RelayCommand]
-    public void OpenWindow()
-    {
-        // 非模态打开窗口
-        var param = new DialogParameters("key", "value");
-        dialogService.Show<TestWindow>(param);
-    }
-
-    [RelayCommand]
-    public void OpenModalDialog()
-    {
-        // 模态打开窗口，等待用户关闭并返回结果
-        var param = new DialogParameters("key", "value");
-        var result = dialogService.ShowDialog<TestWindow>(param);
-
-        if (result != null)
-        {
-            var returnValue = result.Get<string>("resultKey");
-        }
-    }
-}
+services.AddWindow<LoginWindow>("login");
+services.AddWindow<SettingsWindow, SettingsViewModel>();
+services.AddWindow<ReportsWindow, ReportsViewModel>("reports");
 ```
 
-#### 4.2 窗口接收参数并返回结果
-
-让 ViewModel 或 Window 实现 `IDialogAware` 接口：
+`IDialogService` 的非模态显示、模态显示与关闭操作都提供泛型、`Type` 和字符串 key 三种形式：
 
 ```csharp
-using SimpleNavigation.Common;
-using SimpleNavigation.Interface;
+dialogService.Show<LoginWindow>();
+dialogService.Show(typeof(LoginWindow));
+dialogService.Show("login");
 
-public class TestViewModel : IDialogAware
+DialogParameters? genericResult = dialogService.ShowDialog<LoginWindow>();
+DialogParameters? typeResult = dialogService.ShowDialog(typeof(LoginWindow));
+DialogParameters? keyResult = dialogService.ShowDialog("login");
+
+bool closedByGeneric = dialogService.Close<LoginWindow>();
+bool closedByType = dialogService.Close(typeof(LoginWindow));
+bool closedByKey = dialogService.Close("login");
+```
+
+`Show` 与 `ShowDialog` 的三种重载都可以额外接收 `DialogParameters`。
+
+泛型与 `Type` 重载只需要普通 DI 注册，不读取路由表。字符串重载先在独立的 Dialog 路由空间中按 ordinal、区分大小写的 key 查找 Window 类型，随后仍通过普通 DI 解析实例；未知 key 会抛出 `KeyNotFoundException`。Page、Content 与 Dialog 可使用相同 key，互不冲突。
+
+`AddWindow` 默认把 Window 注册为 transient，但 `DialogManager` 会在窗口仍然存活且未关闭时复用当前实例。因此，对同一 Window 类型重复 `Show` 会显示或激活当前实例；即使它当前没有焦点，`Close` 也能关闭它。窗口触发 `Closed` 后记录会移除，下一次 `Show` 才从 DI 解析新实例。默认 transient 注册会产生新的 Window；自定义 singleton 注册或同一仍存活 scope 中复用的 scoped 注册则会返回已关闭实例，WPF 不允许再次显示该实例。`Close` 只查询现有实例，绝不会为了关闭而创建窗口；没有受管理的现有实例时返回 `false`，`Closing` 被取消时也返回 `false`。
+
+Window 以及它的、且与 Window 不同的 `DataContext` 都可以实现 `IDialogAware`，两者会按 Window、DataContext 的顺序接收参数和关闭回调。类库不会设置或替换 `DataContext`：
+
+```csharp
+public sealed class LoginViewModel : IDialogAware
 {
     public Action<DialogParameters?>? RequestClose { get; set; }
 
     public void OnNavigated(DialogParameters? parameters)
     {
-        if (parameters != null)
-        {
-            var value = parameters.Get<string>("key");
-            // 处理传入参数
-        }
+        var id = parameters?.Get<int>("id");
     }
 
-    [RelayCommand]
-    public void Close()
+    public void Accept()
     {
-        // 关闭窗口并返回结果
-        var result = new DialogParameters("resultKey", "resultValue");
-        RequestClose?.Invoke(result);
+        RequestClose?.Invoke(new DialogParameters("accepted", true));
     }
 }
 ```
 
-> 框架支持 `IDialogAware` 同时实现在 Window 自身（code-behind）或 DataContext（ViewModel）上，两者可共存。
+在模态显示中，`RequestClose(result)` 只有在 Window 实际完成关闭后才提交并由 `ShowDialog` 返回；如果关闭被取消，该候选结果不会提交。用户通过系统关闭按钮等方式直接关闭模态窗口时返回 `null`。非模态与模态操作会以事务方式安装、清理或在失败时恢复相关回调，且不会清除应用自行替换的回调。对同一 Window 的活动模态显示执行重入的 `Show`/`ShowDialog` 会被拒绝，以免覆盖当前模态事务。
 
-### 5. DialogParameters 参数对象
+Window 的显示、关闭以及 `RequestClose` 必须在其所属 Dispatcher 线程调用。
+
+## DialogParameters
 
 ```csharp
-// 方式一：键值对构造
-var p1 = new DialogParameters("key", "value");
+var byKey = new DialogParameters("key", "value");
 
-// 方式二：字典构造
-var p2 = new DialogParameters(new Dictionary<string, object>
+var byDictionary = new DialogParameters(new Dictionary<string, object>
 {
-    { "id", 100 },
-    { "name", "test" },
-    { "data", someObject }
+    ["id"] = 100,
+    ["name"] = "test",
 });
 
-// 方式三：索引构造
-var p3 = new DialogParameters("hello", 123, DateTime.Now);
-var first  = p3.Get<string>("0");  // "hello"
-var second = p3.Get<int>("1");     // 123
+var byIndex = new DialogParameters("hello", 123, DateTime.Now);
+var first = byIndex.Get<string>("0");
+var second = byIndex.Get<int>("1");
 
-// 获取 / 设置参数
-var value = p1.Get<string>("key");
-p1.Set("key", "newValue"); // 允许覆盖已有值
+byKey.Set("key", "newValue");
+var value = byKey.Get<string>("key");
 ```
 
-### 6. 架构设计要点
+## DI 生命周期
 
-- **DI 驱动**：所有 Page 和 Window 均由 DI 容器解析，支持构造函数注入
-- **WeakReference 窗口缓存**：`DialogManager` 使用 `WeakReference<Window>` 防止内存泄漏
-- **附加属性注册区域**：通过 `RegionService.RegionName` 在 XAML 中声明式注册导航区域
-- **线程安全**：`PageService` 使用 `ConcurrentDictionary<string, Frame>` 存储区域
-- **双绑定感知**：框架同时检查 Window/Page 自身及其 `DataContext` 是否实现了感知接口
-- **多目标框架**：同时支持 .NET Framework 4.8 和 .NET 8.0 Windows
+`RegisterNavigationService()` 默认把 `IRegionManager`、`IPageService`、`IContentService`、`IDialogService` 和 `IDialogManager` 注册为 singleton。`IRegionManager` 保存命名区域宿主的弱引用，并持有静态 `Region` 声明订阅；它不解析 View 对象图，并会在所属 DI provider 释放时取消订阅。
 
-### 7. 效果预览
+singleton 的 `PageService`、`ContentService` 和 `DialogManager` 会捕获创建它们的 `IServiceProvider`（通常是根容器）；仅创建或持有一个子 scope 不会把这些 singleton 的目标解析切换到该 scope。`DialogService` 构造时从 provider 取得并保存路由注册表，之后只持有该注册表与 `IDialogManager`，不会保留 provider 或直接解析 Window；Window 对象图由 `DialogManager` 从它捕获的 provider 解析。`AddWindow` 默认注册 transient Window 和 ViewModel，但从根 provider 解析的 disposable transient 或 scoped 对象图仍具有下述既有生命周期限制。
 
-![preview](https://github.com/user-attachments/assets/f1692e72-eace-44f8-a6c7-171243d2f854)
+因此，在启用 `ValidateScopes` 时，从根容器解析 scoped View、ViewModel 或 Window 对象图是无效的；从根容器解析的 disposable transient 对象会由 Microsoft DI 保留到根容器释放。类库不会为导航或窗口创建、持有或释放 scope，因为已显示 UI 的生命周期属于应用。
 
----
+需要 scoped 或 disposable View/ViewModel/Window 对象图的应用，必须在调用 `RegisterNavigationService()` 前覆盖相关导航服务和管理器的生命周期或解析策略（其 `TryAdd` 注册会保留先前注册），从应用持有的 scope 解析这些服务，并让 scope 的释放时机与对应 UI 生命周期一致。特别是 scoped Window，每次关闭后若还要重新打开，必须释放旧 scope，并为下一次 UI 生命周期创建新的 scope，确保 DI 返回全新的 Window 实例。
+
+## 区域宿主扩展边界
+
+`Grid`、`StackPanel` 等元素现在可以作为 Content 导航目标，但不能作为区域宿主；`TabControl` 也尚未作为区域宿主启用。
+
+内部区域适配器以 `FrameworkElement` 和宿主能力为边界，因此未来可以在 resolver 中增加适配器，而不必修改 `ContentService`。不过，在支持 `Panel` 前必须明确区域是否拥有全部子元素以及替换/追加策略；在支持 `TabControl` 前必须明确标签创建、选择、复用和 header 策略。
+
+## 破坏性升级迁移
+
+本次重建采用以下 API 映射：
+
+```text
+RegionService.RegionName -> Region.RegionName
+IPageService.GetRegion(...) -> IRegionManager.GetRegion(...)
+IPageService.Goback(...) -> IPageService.GoBack(...)
+```
+
+`RegionService` 已删除。`Goback` 仅作为标记了 `Obsolete` 的转发方法保留，现有代码应迁移到 `GoBack`。由于附加属性所有者发生变化，引用旧属性的已编译 XAML/BAML 必须重新构建。
+
+Dialog API 也有破坏性变化：`IDialogService` 新增了 `Type`、字符串 key 与 `Close` 成员；自定义 `IDialogService` 实现必须补齐这些成员。自定义 `IDialogManager` 实现必须新增 `GetOrCreateWindow(Type)` 与 `GetExistingWindow(Type)`。直接构造 `DialogService` 的代码现在必须同时传入 `IServiceProvider` 和 `IDialogManager`。因此包含这些变更的 NuGet 包应作为破坏性的 2.x 版本升级处理。
 
 ## License
 

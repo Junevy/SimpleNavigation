@@ -1,5 +1,10 @@
+using Microsoft.Extensions.DependencyInjection;
 using SimpleNavigation.Common;
-using SimpleNavigation.Interface;
+using SimpleNavigation.Interface.Awares;
+using SimpleNavigation.Interface.Managers;
+using SimpleNavigation.Interface.Services;
+using System.Runtime.ExceptionServices;
+using System.Runtime.CompilerServices;
 using System.Windows;
 
 namespace SimpleNavigation.Services
@@ -10,92 +15,552 @@ namespace SimpleNavigation.Services
     public class DialogService : IDialogService
     {
         private readonly IDialogManager dialogManager;
+        private readonly NavigationRouteRegistry routes;
+        private readonly object subscriptionSyncRoot = new();
+        private readonly Dictionary<Window, NonModalSubscription> nonModalSubscriptions =
+            new(WindowReferenceComparer.Instance);
+        private readonly object modalSyncRoot = new();
+        private readonly HashSet<Window> activeModalWindows =
+            new(WindowReferenceComparer.Instance);
 
-        public DialogService(IDialogManager dialogManager)
+        public DialogService(IServiceProvider provider, IDialogManager dialogManager)
         {
-            this.dialogManager = dialogManager;
+            if (provider == null)
+                throw new ArgumentNullException(nameof(provider));
+
+            this.dialogManager = dialogManager
+                ?? throw new ArgumentNullException(nameof(dialogManager));
+            routes = provider.GetRequiredService<NavigationRouteRegistry>();
         }
 
-        public void Show<T>(DialogParameters? parameters = null) where T : Window
+        public void Show<TWindow>(DialogParameters? parameters = null) where TWindow : Window
         {
-            var window = dialogManager.GetDialogWindow<T>();
+            Show(typeof(TWindow), parameters);
+        }
 
-            if (window == null)
+        public void Show(Type targetType, DialogParameters? parameters = null)
+        {
+            ValidateWindowType(targetType);
+            ShowCore(dialogManager.GetOrCreateWindow(targetType), parameters);
+        }
+
+        public void Show(string key, DialogParameters? parameters = null)
+        {
+            var targetType = routes.GetRequiredDialogType(key);
+            ValidateWindowType(targetType);
+            ShowCore(dialogManager.GetOrCreateWindow(targetType), parameters);
+        }
+
+        public DialogParameters? ShowDialog<TWindow>(DialogParameters? parameters = null)
+            where TWindow : Window
+        {
+            return ShowDialog(typeof(TWindow), parameters);
+        }
+
+        public DialogParameters? ShowDialog(Type targetType, DialogParameters? parameters = null)
+        {
+            ValidateWindowType(targetType);
+            return ShowDialogCore(dialogManager.GetOrCreateWindow(targetType), parameters);
+        }
+
+        public DialogParameters? ShowDialog(string key, DialogParameters? parameters = null)
+        {
+            var targetType = routes.GetRequiredDialogType(key);
+            ValidateWindowType(targetType);
+            return ShowDialogCore(dialogManager.GetOrCreateWindow(targetType), parameters);
+        }
+
+        public bool Close<TWindow>() where TWindow : Window
+        {
+            return Close(typeof(TWindow));
+        }
+
+        public bool Close(Type targetType)
+        {
+            ValidateWindowType(targetType);
+            return CloseCore(dialogManager.GetExistingWindow(targetType));
+        }
+
+        public bool Close(string key)
+        {
+            var targetType = routes.GetRequiredDialogType(key);
+            ValidateWindowType(targetType);
+            return CloseCore(dialogManager.GetExistingWindow(targetType));
+        }
+
+        private void ShowCore(Window window, DialogParameters? parameters)
+        {
+            window.Dispatcher.VerifyAccess();
+            if (IsModalActive(window))
+            {
+                throw new InvalidOperationException(
+                    "Show cannot replace an active modal presentation for the same window.");
+            }
+
+            var priorSubscription = RemoveNonModalSubscription(window);
+            if (!IsCurrentWindow(window) || HasNonModalSubscription(window))
                 return;
 
-            if (window.DataContext is IDialogAware vm)
+            var subscription = CreateNonModalSubscription(window);
+
+            try
             {
-                vm.OnNavigated(parameters);
-                vm.RequestClose = (p) => window.Close();
-            }
+                if (!AttachNonModalSubscription(window, subscription))
+                    return;
 
-            if (window is IDialogAware w)
+                NotifyAwareTargets(subscription.AwareTargets, parameters);
+
+                if (!IsCurrentWindow(window))
+                    return;
+
+                if (!window.IsVisible)
+                    window.Show();
+
+                window.Activate();
+            }
+            catch
             {
-                w.OnNavigated(parameters);
-                w.RequestClose = (p) => window.Close();
+                var removedSubscription =
+                    RemoveNonModalSubscription(
+                        window,
+                        subscription,
+                        suppressCallbackExceptions: true);
+                if (removedSubscription
+                    && priorSubscription != null
+                    && IsCurrentWindow(window))
+                {
+                    TryRestoreNonModalSubscription(
+                        window,
+                        priorSubscription,
+                        subscription.RequestClose);
+                }
+
+                throw;
             }
-
-            window.Show();
-            window.Activate();
-
         }
 
-        public DialogParameters? ShowDialog<T>(DialogParameters? parameters = null) where T : Window
+        private DialogParameters? ShowDialogCore(Window window, DialogParameters? parameters)
         {
-            var window = dialogManager.GetDialogWindow<T>();
-            if (window == null)
+            window.Dispatcher.VerifyAccess();
+            ClaimModalOwnership(window);
+
+            try
+            {
+                if (window.IsVisible)
+                {
+                    throw new InvalidOperationException(
+                        "ShowDialog cannot be called for a visible window.");
+                }
+
+                return ShowDialogTransaction(window, parameters);
+            }
+            finally
+            {
+                ReleaseModalOwnership(window);
+            }
+        }
+
+        private DialogParameters? ShowDialogTransaction(
+            Window window,
+            DialogParameters? parameters)
+        {
+            var priorSubscription = RemoveNonModalSubscription(window);
+            if (!IsCurrentWindow(window) || HasNonModalSubscription(window))
                 return null;
 
             DialogParameters? result = null;
-
-            window.Closing += (s, e) =>
+            var awareTargets = GetAwareTargets(window);
+            Action<DialogParameters?> requestClose = closeResult =>
             {
-                e.Cancel = true;
-                if (s is IDialogAware dialogAware)
-                {
-                    dialogAware.RequestClose?.Invoke(result);
-                }
+                window.Dispatcher.VerifyAccess();
+                EventHandler? closedHandler = null;
+                closedHandler = (_, _) => result = closeResult;
+                window.Closed += closedHandler;
 
-                if (s is Window w && w.DataContext is IDialogAware dialogVmAware)
+                try
                 {
-                    dialogVmAware.RequestClose?.Invoke(result);
+                    window.Close();
+                }
+                finally
+                {
+                    window.Closed -= closedHandler;
                 }
             };
 
-            if (window.DataContext is IDialogAware vm)
+            var operationFailed = false;
+            try
             {
-                vm.OnNavigated(parameters);
-                vm.RequestClose = (p) =>
+                SetRequestClose(awareTargets, requestClose);
+                NotifyAwareTargets(awareTargets, parameters);
+
+                if (!IsCurrentWindow(window))
+                    return result;
+
+                window.ShowDialog();
+                return result;
+            }
+            catch
+            {
+                operationFailed = true;
+                ClearRequestClose(
+                    awareTargets,
+                    requestClose,
+                    suppressExceptions: true);
+                if (priorSubscription != null && IsCurrentWindow(window))
                 {
-                    result = p;
-                    window.Close();
-                };
+                    TryRestoreNonModalSubscription(
+                        window,
+                        priorSubscription,
+                        requestClose);
+                }
+
+                throw;
+            }
+            finally
+            {
+                if (!operationFailed)
+                    ClearRequestClose(awareTargets, requestClose);
+            }
+        }
+
+        private bool CloseCore(Window? window)
+        {
+            if (window == null)
+                return false;
+
+            window.Dispatcher.VerifyAccess();
+            var closed = false;
+            EventHandler closedHandler = (_, _) => closed = true;
+            window.Closed += closedHandler;
+
+            try
+            {
+                window.Close();
+                return closed;
+            }
+            finally
+            {
+                window.Closed -= closedHandler;
+            }
+        }
+
+        private NonModalSubscription CreateNonModalSubscription(Window window)
+        {
+            var awareTargets = GetAwareTargets(window);
+            Action<DialogParameters?> requestClose = _ =>
+            {
+                window.Dispatcher.VerifyAccess();
+                window.Close();
+            };
+            NonModalSubscription? subscription = null;
+            EventHandler closedHandler = (_, _) =>
+            {
+                if (subscription != null)
+                    RemoveNonModalSubscription(window, subscription);
+            };
+            subscription = new NonModalSubscription(awareTargets, requestClose, closedHandler);
+            return subscription;
+        }
+
+        private bool AttachNonModalSubscription(
+            Window window,
+            NonModalSubscription subscription)
+        {
+            lock (subscriptionSyncRoot)
+            {
+                if (nonModalSubscriptions.ContainsKey(window))
+                    return false;
+
+                nonModalSubscriptions.Add(window, subscription);
             }
 
-            if (window is IDialogAware w)
+            window.Closed += subscription.ClosedHandler;
+            return SetRequestClose(window, subscription);
+        }
+
+        private bool TryRestoreNonModalSubscription(
+            Window window,
+            NonModalSubscription subscription,
+            Action<DialogParameters?> failedRequestClose)
+        {
+            lock (subscriptionSyncRoot)
             {
-                w.OnNavigated(parameters);
-                w.RequestClose = (p) =>
-                {
-                    result = p;
-                    window.Close();
-                };
+                if (nonModalSubscriptions.ContainsKey(window))
+                    return false;
+
+                nonModalSubscriptions.Add(window, subscription);
             }
 
             try
             {
-                window.ShowDialog();
-                window.Activate();
-            }
-            finally
-            {
-                if (window.DataContext is IDialogAware cleanupVm)
-                    cleanupVm.RequestClose = null;
-                else if (window is IDialogAware cleanupW)
-                    cleanupW.RequestClose = null;
+                window.Closed += subscription.ClosedHandler;
+                if (!RestoreRequestClose(
+                    window,
+                    subscription,
+                    subscription.AwareTargets,
+                    subscription.RequestClose,
+                    failedRequestClose))
+                {
+                    RemoveNonModalSubscription(
+                        window,
+                        subscription,
+                        suppressCallbackExceptions: true);
+                    return false;
+                }
 
+                return true;
             }
-            return result;
+            catch
+            {
+                RemoveNonModalSubscription(
+                    window,
+                    subscription,
+                    suppressCallbackExceptions: true);
+                return false;
+            }
+        }
+
+        private NonModalSubscription? RemoveNonModalSubscription(
+            Window window,
+            bool suppressCallbackExceptions = false)
+        {
+            NonModalSubscription? subscription;
+            lock (subscriptionSyncRoot)
+            {
+                if (!nonModalSubscriptions.TryGetValue(window, out subscription))
+                    return null;
+
+                nonModalSubscriptions.Remove(window);
+            }
+
+            window.Closed -= subscription.ClosedHandler;
+            ClearRequestClose(
+                subscription.AwareTargets,
+                subscription.RequestClose,
+                suppressCallbackExceptions);
+            return subscription;
+        }
+
+        private bool RemoveNonModalSubscription(
+            Window window,
+            NonModalSubscription expectedSubscription,
+            bool suppressCallbackExceptions = false)
+        {
+            lock (subscriptionSyncRoot)
+            {
+                if (!nonModalSubscriptions.TryGetValue(window, out var currentSubscription)
+                    || !ReferenceEquals(currentSubscription, expectedSubscription))
+                {
+                    return false;
+                }
+
+                nonModalSubscriptions.Remove(window);
+            }
+
+            window.Closed -= expectedSubscription.ClosedHandler;
+            ClearRequestClose(
+                expectedSubscription.AwareTargets,
+                expectedSubscription.RequestClose,
+                suppressCallbackExceptions);
+            return true;
+        }
+
+        private bool IsExpectedNonModalSubscription(
+            Window window,
+            NonModalSubscription expectedSubscription)
+        {
+            lock (subscriptionSyncRoot)
+            {
+                return nonModalSubscriptions.TryGetValue(window, out var currentSubscription)
+                    && ReferenceEquals(currentSubscription, expectedSubscription);
+            }
+        }
+
+        private bool HasNonModalSubscription(Window window)
+        {
+            lock (subscriptionSyncRoot)
+            {
+                return nonModalSubscriptions.ContainsKey(window);
+            }
+        }
+
+        private bool IsModalActive(Window window)
+        {
+            lock (modalSyncRoot)
+            {
+                return activeModalWindows.Contains(window);
+            }
+        }
+
+        private void ClaimModalOwnership(Window window)
+        {
+            lock (modalSyncRoot)
+            {
+                if (!activeModalWindows.Add(window))
+                {
+                    throw new InvalidOperationException(
+                        "A modal presentation is already active for this window.");
+                }
+            }
+        }
+
+        private void ReleaseModalOwnership(Window window)
+        {
+            lock (modalSyncRoot)
+            {
+                activeModalWindows.Remove(window);
+            }
+        }
+
+        private bool IsCurrentWindow(Window window)
+        {
+            return ReferenceEquals(
+                dialogManager.GetExistingWindow(window.GetType()),
+                window);
+        }
+
+        private static IDialogAware[] GetAwareTargets(Window window)
+        {
+            var windowAware = window as IDialogAware;
+            var dataContextAware = window.DataContext as IDialogAware;
+
+            if (windowAware == null)
+                return dataContextAware == null ? Array.Empty<IDialogAware>() : new[] { dataContextAware };
+
+            if (dataContextAware == null || ReferenceEquals(windowAware, dataContextAware))
+                return new[] { windowAware };
+
+            return new[] { windowAware, dataContextAware };
+        }
+
+        private static void SetRequestClose(
+            IEnumerable<IDialogAware> awareTargets,
+            Action<DialogParameters?> requestClose)
+        {
+            foreach (var aware in awareTargets)
+                aware.RequestClose = requestClose;
+        }
+
+        private bool SetRequestClose(
+            Window window,
+            NonModalSubscription subscription)
+        {
+            foreach (var aware in subscription.AwareTargets)
+            {
+                aware.RequestClose = subscription.RequestClose;
+                if (!IsExpectedNonModalSubscription(window, subscription))
+                {
+                    ClearRequestClose(
+                        subscription.AwareTargets,
+                        subscription.RequestClose);
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void NotifyAwareTargets(
+            IEnumerable<IDialogAware> awareTargets,
+            DialogParameters? parameters)
+        {
+            foreach (var aware in awareTargets)
+                aware.OnNavigated(parameters);
+        }
+
+        private bool RestoreRequestClose(
+            Window window,
+            NonModalSubscription subscription,
+            IEnumerable<IDialogAware> awareTargets,
+            Action<DialogParameters?> requestClose,
+            Action<DialogParameters?> failedRequestClose)
+        {
+            foreach (var aware in awareTargets)
+            {
+                var currentRequestClose = aware.RequestClose;
+                if (!IsExpectedNonModalSubscription(window, subscription))
+                    return false;
+
+                if (currentRequestClose == null
+                    || ReferenceEquals(currentRequestClose, failedRequestClose))
+                {
+                    aware.RequestClose = requestClose;
+                    if (!IsExpectedNonModalSubscription(window, subscription))
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void ClearRequestClose(
+            IEnumerable<IDialogAware> awareTargets,
+            Action<DialogParameters?> requestClose,
+            bool suppressExceptions = false)
+        {
+            ExceptionDispatchInfo? cleanupException = null;
+            foreach (var aware in awareTargets)
+            {
+                try
+                {
+                    if (ReferenceEquals(aware.RequestClose, requestClose))
+                        aware.RequestClose = null;
+                }
+                catch (Exception exception)
+                {
+                    cleanupException ??= ExceptionDispatchInfo.Capture(exception);
+                }
+            }
+
+            if (!suppressExceptions)
+                cleanupException?.Throw();
+        }
+
+        private static void ValidateWindowType(Type targetType)
+        {
+            if (targetType == null)
+                throw new ArgumentNullException(nameof(targetType));
+
+            if (!typeof(Window).IsAssignableFrom(targetType))
+            {
+                throw new ArgumentException(
+                    $"Target type '{targetType.FullName}' must derive from Window.",
+                    nameof(targetType));
+            }
+        }
+
+        private sealed class NonModalSubscription
+        {
+            public NonModalSubscription(
+                IDialogAware[] awareTargets,
+                Action<DialogParameters?> requestClose,
+                EventHandler closedHandler)
+            {
+                AwareTargets = awareTargets;
+                RequestClose = requestClose;
+                ClosedHandler = closedHandler;
+            }
+
+            public IDialogAware[] AwareTargets { get; }
+
+            public Action<DialogParameters?> RequestClose { get; }
+
+            public EventHandler ClosedHandler { get; }
+        }
+
+        private sealed class WindowReferenceComparer : IEqualityComparer<Window>
+        {
+            public static WindowReferenceComparer Instance { get; } = new();
+
+            public bool Equals(Window? x, Window? y)
+            {
+                return ReferenceEquals(x, y);
+            }
+
+            public int GetHashCode(Window obj)
+            {
+                return RuntimeHelpers.GetHashCode(obj);
+            }
         }
     }
 }
